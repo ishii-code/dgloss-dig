@@ -46,8 +46,12 @@ export const SettingSchema = z.object({
   insuranceCoefficient: z.number().positive(),
   /** 予算係数（既定 4.0） */
   budgetCoefficient: z.number().positive(),
-  /** 年利率(%)（既定 12） */
+  /** 年利率(%)（既定 12・ディグロス金融管理画面から変更可） */
   annualRatePct: z.number().min(0),
+  /** 初回借入（入社時・必須）の既定額 */
+  initialLoanDefault: z.number().min(0),
+  /** 借入の既定返済期間(ヶ月) */
+  loanTermMonthsDefault: z.number().int().positive(),
   /** 正社員 共通費（座席代・月額） */
   commonCostFulltime: z.number().min(0),
   /** アルバイト 共通費（座席代・月額） */
@@ -67,6 +71,8 @@ export const DEFAULT_SETTING: Setting = {
   insuranceCoefficient: 1.2,
   budgetCoefficient: 4.0,
   annualRatePct: 12,
+  initialLoanDefault: 2_000_000,
+  loanTermMonthsDefault: 12,
   commonCostFulltime: 350_000,
   commonCostParttime: 150_000,
   promotion: { upTwo: 1.2, upOne: 1.0, downOne: 0.8, downTwo: 0.6 },
@@ -166,19 +172,46 @@ export const BonusDigRecordSchema = z.object({
 export type BonusDigRecord = z.infer<typeof BonusDigRecordSchema>;
 
 // ─────────────────────────────────────────────
-// 借入管理 / Digloss Bank（要件 F-5）
+// 借入管理 / Digloss Bank・ディグロス金融（要件 F-5・v1.2）
 // ─────────────────────────────────────────────
+/** 会社（ディグロス金融）を表す貸出者の固定名 */
+export const COMPANY_LENDER = "ディグロス金融";
+
+/** 借入種別: 初回=入社時(自動承認) / 追加=承認要 */
+export const LoanType = z.enum(["初回", "追加"]);
+export type LoanType = z.infer<typeof LoanType>;
+
+/** 借入ステータス */
+export const LoanStatus = z.enum(["申請中", "承認済", "却下", "完済"]);
+export type LoanStatus = z.infer<typeof LoanStatus>;
+
 export const LoanSchema = z.object({
+  id: z.string().min(1).max(32),
   yearMonth: YearMonth,
   borrowerId: z.string().min(1).max(32),
-  /** 貸出者: 会社は "ディグロス"、相対は Person ID */
+  /** 貸出者: 会社は COMPANY_LENDER、相対は Person ID */
   lender: z.string().min(1).max(32),
+  loanType: LoanType,
+  status: LoanStatus,
   principal: z.number().positive(),
-  monthlyRate: z.number().min(0), // 月利（例 0.01）
+  monthlyRate: z.number().min(0), // 借入時の月利（例 0.01・以後の金利変更に不影響）
   termMonths: z.number().int().positive(),
+  appliedOn: z.string().date(),
+  approvedBy: z.string().max(32).nullable(), // 承認者(金融)。初回は自動承認
+  approvedOn: z.string().date().nullable(),
   note: z.string().max(256).nullable(),
 });
 export type Loan = z.infer<typeof LoanSchema>;
+
+/** 追加借入の申請（ディグロス金融が承認/却下する対象・要件 F-5） */
+export const LoanApplicationSchema = z.object({
+  borrowerId: z.string().min(1).max(32),
+  requestedPrincipal: z.number().positive(),
+  termMonths: z.number().int().positive(),
+  reason: z.string().min(1).max(256),
+  appliedOn: z.string().date(),
+});
+export type LoanApplication = z.infer<typeof LoanApplicationSchema>;
 
 export interface LoanScheduleRow {
   /** 借入残高（月初） */

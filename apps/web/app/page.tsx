@@ -10,6 +10,7 @@ import {
   TabNav,
   type Tab,
 } from "@/components/ui";
+import { DiglossBank, FinanceConsole } from "@/components/bank";
 import { man, pct, rateColor } from "@/lib/format";
 import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
 
@@ -17,6 +18,7 @@ const TABS: Tab[] = [
   { key: "monitor", label: "予実モニター", sub: "毎日更新" },
   { key: "members", label: "メンバー評価", sub: "月次更新" },
   { key: "bank", label: "Digloss Bank", sub: "借入・返済" },
+  { key: "finance", label: "金融管理", sub: "承認・金利" },
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
@@ -112,6 +114,10 @@ export default function Page() {
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
             <MemberTable leg={leg} />
           </>
+        ) : tab === "bank" ? (
+          <DiglossBank />
+        ) : tab === "finance" ? (
+          <FinanceConsole />
         ) : (
           <Placeholder />
         )}

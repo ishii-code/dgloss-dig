@@ -7,6 +7,7 @@ import type {
   EmploymentType,
   EvaluationCycle,
   EvaluationLeg,
+  Loan,
   LoanScheduleRow,
   MonthlyEvaluationResult,
   PromotionStep,
@@ -14,7 +15,7 @@ import type {
   Rank,
   Setting,
 } from "@dig/contracts";
-import { INCENTIVE_RATE } from "@dig/contracts";
+import { COMPANY_LENDER, INCENTIVE_RATE } from "@dig/contracts";
 
 // ── 日付ユーティリティ ─────────────────────────
 const MS_PER_DAY = 86_400_000;
@@ -188,7 +189,12 @@ export function evaluateMonthly(
   };
 }
 
-// ── 借入 / Digloss Bank（要件 F-5, §7-11,12） ──
+// ── 借入 / Digloss Bank・ディグロス金融（要件 F-5, §7-11,12） ──
+/** 年利(%) → 月利（例: 12% → 0.01）。ディグロス金融の金利変更に追従。 */
+export function monthlyRateFromAnnual(annualRatePct: number): number {
+  return annualRatePct / 100 / 12;
+}
+
 /** 利息 = 借入額 × 月利 */
 export function loanInterest(principal: number, monthlyRate: number): number {
   return principal * monthlyRate;
@@ -221,6 +227,35 @@ export function loanSchedule(
     opening = closing;
   }
   return rows;
+}
+
+/**
+ * 入社時の必須初回借入を生成（要件 F-5・v1.2）。
+ * 会社（ディグロス金融）からの借入で、初回は自動承認（承認不要）。
+ * 金利は設定の年利から算出（＝借入時点のレートを固定保持）。
+ */
+export function buildInitialLoan(args: {
+  id: string;
+  yearMonth: string;
+  borrowerId: string;
+  joinedOn: string;
+  setting: Setting;
+}): Loan {
+  return {
+    id: args.id,
+    yearMonth: args.yearMonth,
+    borrowerId: args.borrowerId,
+    lender: COMPANY_LENDER,
+    loanType: "初回",
+    status: "承認済",
+    principal: args.setting.initialLoanDefault,
+    monthlyRate: monthlyRateFromAnnual(args.setting.annualRatePct),
+    termMonths: args.setting.loanTermMonthsDefault,
+    appliedOn: args.joinedOn,
+    approvedBy: COMPANY_LENDER, // 自動承認
+    approvedOn: args.joinedOn,
+    note: "入社時 必須初回借入（自動承認）",
+  };
 }
 
 // ── 残高計算 / インセンティブ（要件 F-8, §7-13,14） ──

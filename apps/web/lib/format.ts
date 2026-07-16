@@ -21,6 +21,27 @@ export function rateColor(rate: number): string {
   return "text-semantic-danger";
 }
 
+/** 借入ステータスのバッジ配色。 */
+export function loanStatusStyle(status: string): string {
+  switch (status) {
+    case "承認済":
+      return "bg-emerald-100 text-semantic-success";
+    case "申請中":
+      return "bg-amber-100 text-semantic-warn";
+    case "却下":
+      return "bg-rose-100 text-semantic-danger";
+    default:
+      return "bg-slate-100 text-ink-muted"; // 完済
+  }
+}
+
+/** 借入種別のバッジ配色。 */
+export function loanTypeStyle(type: string): string {
+  return type === "初回"
+    ? "bg-blue-100 text-brand-primary"
+    : "bg-violet-100 text-brand-accent";
+}
+
 /** 評価ランクのバッジ配色。 */
 export function rankStyle(rank: string): string {
   switch (rank) {

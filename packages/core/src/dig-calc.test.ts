@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTING } from "@dig/contracts";
 import {
   achievementRate,
+  buildInitialLoan,
   computeQuarterBalance,
   cumulativeBudgetDig,
   daysInMonth,
@@ -9,6 +10,7 @@ import {
   evaluationRank,
   loanSchedule,
   monthlyBudgetDig,
+  monthlyRateFromAnnual,
   mround,
   promotionStep,
   prorationCoefficient,
@@ -177,6 +179,41 @@ describe("回帰: インセンティブ (Excel 残高計算 row2)", () => {
     });
     expect(r.balance).toBe(1_710_000);
     expect(r.incentive).toBe(342_000);
+  });
+});
+
+describe("金利 / 初回借入（ディグロス金融・v1.2）", () => {
+  it("年利12% → 月利0.01", () => {
+    expect(monthlyRateFromAnnual(12)).toBeCloseTo(0.01, 6);
+    expect(monthlyRateFromAnnual(6)).toBeCloseTo(0.005, 6);
+  });
+
+  it("入社時の必須初回借入は会社・自動承認", () => {
+    const loan = buildInitialLoan({
+      id: "L-INIT-1",
+      yearMonth: "2026-01",
+      borrowerId: "B0000105",
+      joinedOn: "2026-01-05",
+      setting: S,
+    });
+    expect(loan.loanType).toBe("初回");
+    expect(loan.status).toBe("承認済");
+    expect(loan.lender).toBe("ディグロス金融");
+    expect(loan.principal).toBe(2_000_000);
+    expect(loan.monthlyRate).toBeCloseTo(0.01, 6);
+    expect(loan.approvedBy).toBe("ディグロス金融");
+  });
+
+  it("金利変更後の新規借入は新レートを使う", () => {
+    const changed = { ...S, annualRatePct: 6 };
+    const loan = buildInitialLoan({
+      id: "L-INIT-2",
+      yearMonth: "2026-02",
+      borrowerId: "B0000104",
+      joinedOn: "2026-02-01",
+      setting: changed,
+    });
+    expect(loan.monthlyRate).toBeCloseTo(0.005, 6);
   });
 });
 
