@@ -45,12 +45,26 @@ enum MemberStatus {
   退社
 }
 
+enum LoanType {
+  初回
+  追加
+}
+
+enum LoanStatus {
+  申請中
+  承認済
+  却下
+  完済
+}
+
 /// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。
 model Setting {
   yearMonth            String   @id // YYYY-MM
   insuranceCoefficient Decimal  @db.Decimal(6, 3)
   budgetCoefficient    Decimal  @db.Decimal(6, 3)
   annualRatePct        Decimal  @db.Decimal(6, 3)
+  initialLoanDefault   Decimal  @db.Decimal(14, 2)
+  loanTermMonthsDefault Int     @default(12)
   commonCostFulltime   Decimal  @db.Decimal(12, 2)
   commonCostParttime   Decimal  @db.Decimal(12, 2)
   promotionUpTwo       Decimal  @db.Decimal(5, 3)
@@ -170,21 +184,28 @@ model BonusDigRecord {
   @@index([yearMonth, personId])
 }
 
-/// 借入管理 / Digloss Bank（要件 F-5）
+/// 借入管理 / Digloss Bank・ディグロス金融（要件 F-5・v1.2）
 model Loan {
-  id          Int      @id @default(autoincrement())
+  id          Int        @id @default(autoincrement())
   yearMonth   String
   borrowerId  String
-  borrower    Member   @relation("borrower", fields: [borrowerId], references: [personId])
-  lender      String // "ディグロス" or Person ID
-  principal   Decimal  @db.Decimal(14, 2)
-  monthlyRate Decimal  @db.Decimal(6, 4)
+  borrower    Member     @relation("borrower", fields: [borrowerId], references: [personId])
+  lender      String // "ディグロス金融" or Person ID
+  loanType    LoanType   @default(追加)
+  status      LoanStatus @default(申請中)
+  principal   Decimal    @db.Decimal(14, 2)
+  monthlyRate Decimal    @db.Decimal(6, 4) // 借入時レートを固定保持
   termMonths  Int
+  appliedOn   DateTime   @db.Date
+  approvedBy  String? // 承認者(金融)。初回は自動承認
+  approvedOn  DateTime?  @db.Date
+  reason      String?
   note        String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime   @default(now())
 
   @@index([borrowerId])
   @@index([yearMonth])
+  @@index([status])
 }
 
 /// 取引記録 / メンバー間送金（要件 F-6）
