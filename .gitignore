@@ -1,0 +1,22 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# prisma
+prisma/*.db
+
+# misc
+.DS_Store
+coverage/

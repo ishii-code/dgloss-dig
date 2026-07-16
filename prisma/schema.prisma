@@ -1,0 +1,205 @@
+// Dig制度 データモデル（要件定義 §6）
+// DB: Supabase(PostgreSQL) / ORM: Prisma。金額は Decimal で保持。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EmploymentType {
+  正社員
+  アルバイト
+}
+
+enum EvaluationCycle {
+  四半期
+  半期
+}
+
+enum Position {
+  部長
+  マネージャー
+  リーダー
+  メンバー
+}
+
+enum JobType {
+  FS
+  IS
+  CS
+}
+
+enum Rank {
+  S
+  A
+  B
+  C
+  D
+}
+
+enum MemberStatus {
+  在籍
+  退社
+}
+
+/// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。
+model Setting {
+  yearMonth            String   @id // YYYY-MM
+  insuranceCoefficient Decimal  @db.Decimal(6, 3)
+  budgetCoefficient    Decimal  @db.Decimal(6, 3)
+  annualRatePct        Decimal  @db.Decimal(6, 3)
+  commonCostFulltime   Decimal  @db.Decimal(12, 2)
+  commonCostParttime   Decimal  @db.Decimal(12, 2)
+  promotionUpTwo       Decimal  @db.Decimal(5, 3)
+  promotionUpOne       Decimal  @db.Decimal(5, 3)
+  promotionDownOne     Decimal  @db.Decimal(5, 3)
+  promotionDownTwo     Decimal  @db.Decimal(5, 3)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+/// 給与レンジ（役職 × ランク）
+model SalaryRange {
+  id       Int      @id @default(autoincrement())
+  position Position
+  grade    String // A / B / C
+  amount   Decimal  @db.Decimal(12, 2)
+
+  @@unique([position, grade])
+}
+
+/// メンバーマスタ（要件 F-2）。personId は手入力の Person ID（v1.1 Q4）。
+model Member {
+  personId        String          @id
+  name            String
+  division        String
+  position        Position
+  jobType         JobType?
+  groupLeaderId   String?
+  employmentType  EmploymentType
+  hourlyWage      Decimal?        @db.Decimal(10, 2)
+  basePay         Decimal         @db.Decimal(12, 2)
+  positionBase    Decimal         @db.Decimal(12, 2)
+  joinedOn        DateTime        @db.Date
+  leftOn          DateTime?       @db.Date
+  evaluationCycle EvaluationCycle
+  status          MemberStatus    @default(在籍)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  evaluations  MonthlyEvaluation[]
+  bonusRecords BonusDigRecord[]
+  loans        Loan[]              @relation("borrower")
+  paidTxns     Transaction[]       @relation("payer")
+  receivedTxns Transaction[]       @relation("payee")
+
+  @@index([division])
+  @@index([groupLeaderId])
+}
+
+/// 月次評価（要件 F-7）。確定後はイミュータブル（値凍結・F-9）。
+model MonthlyEvaluation {
+  yearMonth String
+  personId  String
+  member    Member @relation(fields: [personId], references: [personId])
+
+  // 取込時に凍結する値
+  division       String
+  employmentType EmploymentType
+  positionBase   Decimal        @db.Decimal(12, 2)
+  joinedOn       DateTime       @db.Date
+  leftOn         DateTime?      @db.Date
+
+  // 計算結果
+  residencyDays        Int
+  prorationCoefficient Decimal @db.Decimal(6, 4)
+  seatCost             Decimal @db.Decimal(12, 2)
+  totalCost            Decimal @db.Decimal(14, 2)
+  monthlyBudgetDig     Decimal @db.Decimal(14, 2)
+  cumulativeBudgetDig  Decimal @db.Decimal(16, 2)
+
+  // 実績（成果Dig=獲得粗利は手入力・v1.1 Q3）
+  seikaDig Decimal @db.Decimal(14, 2)
+  bonusDig Decimal @db.Decimal(14, 2) @default(0)
+  loanDig  Decimal @db.Decimal(14, 2) @default(0)
+
+  // 単月
+  monthlyActualDig Decimal @db.Decimal(14, 2)
+  monthlyRate      Decimal @db.Decimal(8, 4)
+  monthlyRank      Rank
+  // 累計
+  cumulativeActualDig Decimal @db.Decimal(14, 2)
+  cumulativeRate      Decimal @db.Decimal(8, 4)
+  cumulativeRank      Rank
+
+  finalized Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@id([yearMonth, personId])
+  @@index([yearMonth])
+}
+
+/// ボーナスDig項目マスタ（要件 F-4）
+model BonusDigItem {
+  itemId       String   @id
+  category     String
+  name         String
+  grantDig     Decimal  @db.Decimal(12, 2)
+  monthlyCapDig Decimal @db.Decimal(12, 2)
+  description  String?
+  enabled      Boolean  @default(true)
+
+  records BonusDigRecord[]
+}
+
+/// ボーナスDig記録（要件 F-4）
+model BonusDigRecord {
+  id         Int      @id @default(autoincrement())
+  yearMonth  String
+  recordedOn DateTime @db.Date
+  personId   String
+  member     Member   @relation(fields: [personId], references: [personId])
+  itemId     String
+  item       BonusDigItem @relation(fields: [itemId], references: [itemId])
+  grantedDig Decimal  @db.Decimal(12, 2)
+  note       String?
+
+  @@index([yearMonth, personId])
+}
+
+/// 借入管理 / Digloss Bank（要件 F-5）
+model Loan {
+  id          Int      @id @default(autoincrement())
+  yearMonth   String
+  borrowerId  String
+  borrower    Member   @relation("borrower", fields: [borrowerId], references: [personId])
+  lender      String // "ディグロス" or Person ID
+  principal   Decimal  @db.Decimal(14, 2)
+  monthlyRate Decimal  @db.Decimal(6, 4)
+  termMonths  Int
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@index([borrowerId])
+  @@index([yearMonth])
+}
+
+/// 取引記録 / メンバー間送金（要件 F-6）
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  yearMonth   String
+  tradedOn    DateTime @db.Date
+  payerId     String
+  payer       Member   @relation("payer", fields: [payerId], references: [personId])
+  payeeId     String
+  payee       Member   @relation("payee", fields: [payeeId], references: [personId])
+  amount      Decimal  @db.Decimal(14, 2)
+  description String
+  note        String?
+  createdAt   DateTime @default(now())
+
+  @@index([yearMonth])
+}
