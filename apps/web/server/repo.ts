@@ -572,6 +572,21 @@ export async function decideLoanApplication(loanId: number, d: LoanDecision) {
       body: `【${d.decision}】${d.comment ?? ""}`.trim(),
     },
   });
+  // Q12: 相対貸借の承認はゼロサム（貸し手→借り手の送金として記録）
+  if (d.decision === "承認" && loan.lender !== COMPANY_LENDER) {
+    await prisma.transaction.create({
+      data: {
+        yearMonth: loan.yearMonth,
+        tradedOn: new Date(),
+        payerId: loan.lender, // 貸し手（Dig減）
+        payeeId: loan.borrowerId, // 借り手（Dig増）
+        amount: loan.principal,
+        description: "相対貸付（承認）",
+        note: `Loan#${loanId}`,
+      },
+    });
+  }
+
   await audit(d.actorAccountId, `loan.${d.decision}`, "Loan", String(loanId), { status });
   return { id: loanId, status };
 }
@@ -629,4 +644,34 @@ export async function unreadCounts(accountId: string) {
     }
   }
   return { total, perLoan };
+}
+
+// ─────────────────────────────────────────────
+// 期末確定（Q8）: 評価を凍結し、インセン・昇降級を確定
+// ─────────────────────────────────────────────
+import { computeQuarterBalance, promotionRate, promotionStepDual } from "@dig/core";
+import { DEFAULT_SETTING } from "@dig/contracts";
+
+/** 対象月の評価を確定（finalized=true）し、インセン・昇降級のスナップショットを返す（Q8）。 */
+export async function finalizeMonth(yearMonth: string, actor: string) {
+  const evals = await prisma.monthlyEvaluation.findMany({ where: { yearMonth } });
+  const snapshot = evals.map((ev) => {
+    const seika = ev.seikaDig.toNumber();
+    const bonus = ev.bonusDig.toNumber();
+    const loan = ev.loanDig.toNumber();
+    const budget = ev.monthlyBudgetDig.toNumber();
+    // Q2/Q5案2: インセン原資=成果+ボーナス（借入除外）
+    const qb = computeQuarterBalance({ personId: ev.personId, gross: seika, target: budget, bonus });
+    // Q1案1: 昇級=借入抜き / 降級=借入込み
+    const step = promotionStepDual({
+      actualRate: ev.monthlyRate.toNumber(),
+      promoRate: promotionRate(seika, bonus, budget),
+      setting: DEFAULT_SETTING,
+    });
+    return { personId: ev.personId, incentive: qb.incentive, balance: qb.balance, promotionStep: step, rank: ev.monthlyRank };
+  });
+
+  await prisma.monthlyEvaluation.updateMany({ where: { yearMonth }, data: { finalized: true } });
+  await audit(actor, "evaluation.finalize", "MonthlyEvaluation", yearMonth, { count: evals.length });
+  return { yearMonth, finalized: evals.length, snapshot };
 }
