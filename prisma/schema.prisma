@@ -9,6 +9,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Dig獲得ルール（事業部別・要件 F-3）
+model CalcRule {
+  id             String       @id
+  division       String
+  name           String
+  ruleType       CalcRuleType
+  modelKeyFilter String?
+  unitLine       Decimal      @default(0) @db.Decimal(14, 2)
+  unitCall       Decimal      @default(0) @db.Decimal(14, 2)
+  ratioPercent   Decimal      @default(0) @db.Decimal(7, 2)
+  fixedDig       Decimal      @default(0) @db.Decimal(14, 2)
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([division])
+}
+
+/// 契約（keiyaku-kanri-next から取込んだキャッシュ・要件 F-3）
+model Contract {
+  id           String              @id // keiyaku contract id
+  contractNo   String?
+  customerName String
+  division     String
+  modelKey     String
+  status       String
+  baseAmount   Decimal             @db.Decimal(14, 2)
+  setupFee     Decimal             @default(0) @db.Decimal(14, 2)
+  initialFee   Decimal             @default(0) @db.Decimal(14, 2)
+  termMonths   Int                 @default(0)
+  startDate    DateTime?           @db.Date
+  lineItems    Json // ContractLineItem[]
+  yearMonth    String // 反映対象月
+  createdAt    DateTime            @default(now())
+  assignment   ContractAssignment?
+
+  @@index([division])
+  @@index([yearMonth])
+}
+
+/// 契約→従業員のDig帰属（折半対応・SFA担当者から初期化／手動修正可・要件 F-3）
+model ContractAssignment {
+  contractId String   @id
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  source     String // sfa / manual
+  shares     Json // AssignmentShare[] {personId, sharePercent}
+  updatedAt  DateTime @updatedAt
+}
+
 /// 監査ログ（設定変更・借入承認・送金・金利変更等の操作記録・要件 §10）
 model AuditLog {
   id        Int      @id @default(autoincrement())
@@ -69,6 +118,13 @@ enum LoanStatus {
   承認済
   却下
   完済
+}
+
+enum CalcRuleType {
+  回線コール単価
+  初回発注1to1
+  月額基本料金割合
+  固定Dig
 }
 
 /// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。

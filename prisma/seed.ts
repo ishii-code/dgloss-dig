@@ -44,6 +44,13 @@ const MEMBERS: MemberSeed[] = [
 ];
 
 async function main() {
+  // 冪等化: 追記系テーブルを一旦クリア
+  await prisma.contractAssignment.deleteMany();
+  await prisma.contract.deleteMany();
+  await prisma.loan.deleteMany();
+  await prisma.bonusDigRecord.deleteMany();
+  await prisma.transaction.deleteMany();
+
   // 設定
   await prisma.setting.upsert({
     where: { yearMonth: YM },
@@ -191,6 +198,40 @@ async function main() {
     ],
   });
 
+  // Dig獲得ルール（事業部別・要件 F-3）
+  const rules = [
+    { id: "R-AITEL", division: "AIテレアポ事業部", name: "AIテレアポ（回線・コール単価）", ruleType: "回線コール単価" as const, modelKeyFilter: "line_call", unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, active: true },
+    { id: "R-APOPRO", division: "アポプロ", name: "アポプロ（初回発注1円=1Dig）", ruleType: "初回発注1to1" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, active: true },
+    { id: "R-CRM", division: "CRM事業部", name: "CRM（月額基本料金50%）", ruleType: "月額基本料金割合" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 50, fixedDig: 0, active: true },
+  ];
+  for (const r of rules) {
+    await prisma.calcRule.upsert({ where: { id: r.id }, update: r, create: r });
+  }
+
+  // 契約（keiyaku 取込サンプル）＋ 帰属（SFA担当者から初期化・折半対応）
+  const contracts = [
+    { id: "K-1001", contractNo: "C2607-001", customerName: "サンプル商事", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 300000, setupFee: 100000, initialFee: 500000, termMonths: 12, startDate: "2026-01-10", lineItems: [{ key: "line", qty: 3, unit: 50000 }, { key: "call", qty: 2, unit: 50000 }], yearMonth: YM, shares: [{ personId: "B0000098", sharePercent: 50 }, { personId: "B0000097", sharePercent: 50 }] },
+    { id: "K-1002", contractNo: "C2607-002", customerName: "テスト工業", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 200000, setupFee: 0, initialFee: 300000, termMonths: 6, startDate: "2026-01-15", lineItems: [{ key: "line", qty: 2, unit: 50000 }], yearMonth: YM, shares: [{ personId: "B0000064", sharePercent: 100 }] },
+    { id: "K-2001", contractNo: "C2607-010", customerName: "CRM顧客A", division: "CRM事業部", modelKey: "account", status: "active", baseAmount: 800000, setupFee: 0, initialFee: 0, termMonths: 12, startDate: "2026-01-05", lineItems: [], yearMonth: YM, shares: [{ personId: "B0000085", sharePercent: 100 }] },
+  ];
+  for (const c of contracts) {
+    const { shares, ...contract } = c;
+    await prisma.contract.upsert({
+      where: { id: c.id },
+      update: {},
+      create: {
+        ...contract,
+        startDate: new Date(`${c.startDate}T00:00:00Z`),
+        lineItems: c.lineItems,
+      },
+    });
+    await prisma.contractAssignment.upsert({
+      where: { contractId: c.id },
+      update: {},
+      create: { contractId: c.id, source: "sfa", shares },
+    });
+  }
+
   const counts = {
     members: await prisma.member.count(),
     evaluations: await prisma.monthlyEvaluation.count(),
@@ -198,6 +239,8 @@ async function main() {
     bonusItems: await prisma.bonusDigItem.count(),
     bonusRecords: await prisma.bonusDigRecord.count(),
     transactions: await prisma.transaction.count(),
+    calcRules: await prisma.calcRule.count(),
+    contracts: await prisma.contract.count(),
   };
   console.log("seeded:", counts);
 }

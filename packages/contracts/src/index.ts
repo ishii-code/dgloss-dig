@@ -266,3 +266,91 @@ export const INCENTIVE_RATE = 0.2;
 
 /** 昇降級判定結果（+2/+1/0/-1/-2 段） */
 export type PromotionStep = 2 | 1 | 0 | -1 | -2;
+
+// ─────────────────────────────────────────────
+// Dig獲得ルール（CalcRule・要件 F-3）
+// 事業部別に「契約内容 → 付与Dig」を定義する。
+// ─────────────────────────────────────────────
+/**
+ * ルール種別:
+ * - 回線コール単価: line_items の回線数×unitLine + コール数×unitCall
+ * - 初回発注1to1: 初期発注額(initial_fee)を 1円=1Dig（千円切捨）
+ * - 月額基本料金割合: base_amount × ratioPercent%
+ * - 固定Dig: 契約1件あたり fixedDig
+ */
+export const CalcRuleType = z.enum([
+  "回線コール単価",
+  "初回発注1to1",
+  "月額基本料金割合",
+  "固定Dig",
+]);
+export type CalcRuleType = z.infer<typeof CalcRuleType>;
+
+export const CalcRuleSchema = z.object({
+  id: z.string().min(1).max(32),
+  division: z.string().min(1).max(64), // 事業部
+  name: z.string().min(1).max(128),
+  ruleType: CalcRuleType,
+  /** 適用する課金形態（keiyaku model_key）。null=全て */
+  modelKeyFilter: z.string().max(64).nullable(),
+  unitLine: z.number().min(0).default(0), // 回線単価(Dig)
+  unitCall: z.number().min(0).default(0), // コール単価(Dig)
+  ratioPercent: z.number().min(0).max(1000).default(0), // 月額割合(%)
+  fixedDig: z.number().min(0).default(0), // 固定Dig
+  active: z.boolean().default(true),
+});
+export type CalcRule = z.infer<typeof CalcRuleSchema>;
+
+// ─────────────────────────────────────────────
+// 契約（keiyaku-kanri-next 連携・要件 F-3）
+// keiyaku の Contract を Dig 計算に必要な範囲でミラー。
+// ─────────────────────────────────────────────
+export const ContractLineItem = z.object({
+  key: z.string(), // lic / num / line / call / acct ...
+  qty: z.number(),
+  unit: z.number(),
+});
+export type ContractLineItem = z.infer<typeof ContractLineItem>;
+
+export const ContractSchema = z.object({
+  id: z.string().min(1),
+  contractNo: z.string().nullable(),
+  customerName: z.string(),
+  division: z.string(), // 事業部（Dig帰属先の判定に使用）
+  modelKey: z.string(), // 課金形態
+  status: z.string(), // active / applying / paused / canceled / expiring
+  baseAmount: z.number().min(0), // 月額基本料金
+  setupFee: z.number().min(0).default(0),
+  initialFee: z.number().min(0).default(0),
+  termMonths: z.number().int().min(0).default(0),
+  startDate: z.string().nullable(),
+  lineItems: z.array(ContractLineItem).default([]),
+});
+export type Contract = z.infer<typeof ContractSchema>;
+
+// ─────────────────────────────────────────────
+// 契約→従業員のDig帰属（ContractAssignment・折半対応）
+// 初期値はSFAの担当者名から引く／後から修正可能／複数人で折半(share%)
+// ─────────────────────────────────────────────
+export const AssignmentShare = z.object({
+  personId: z.string().min(1).max(32),
+  /** 折半割合(%)。複数人で合計100を想定 */
+  sharePercent: z.number().min(0).max(100),
+});
+export type AssignmentShare = z.infer<typeof AssignmentShare>;
+
+export const ContractAssignmentSchema = z.object({
+  contractId: z.string().min(1),
+  /** 帰属元: sfa（担当者名から自動）/ manual（手動修正） */
+  source: z.enum(["sfa", "manual"]),
+  shares: z.array(AssignmentShare).min(1),
+});
+export type ContractAssignment = z.infer<typeof ContractAssignmentSchema>;
+
+/** 契約Dig計算＋帰属の結果（1契約） */
+export interface ContractDigResult {
+  contractId: string;
+  totalDig: number;
+  /** 従業員別の按分Dig */
+  perPerson: { personId: string; dig: number }[];
+}
