@@ -3,6 +3,19 @@
  * rawSQL 不使用（CONVENTIONS）。変更系は監査ログを残す。
  */
 import { Prisma } from "@prisma/client";
+import type {
+  AssignmentShare,
+  CalcRule,
+  Contract,
+  ContractLineItem,
+} from "@dig/contracts";
+import {
+  achievementRate,
+  aggregateSeikaDig,
+  computeContractDig,
+  evaluationRank,
+  splitDig,
+} from "@dig/core";
 import { prisma } from "./db";
 
 /** 監査ログ記録 */
@@ -153,4 +166,218 @@ export async function createTransaction(input: {
     amount: input.amount,
   });
   return { id: txn.id };
+}
+
+// ─────────────────────────────────────────────
+// Dig獲得ルール（CalcRule・要件 F-3）
+// ─────────────────────────────────────────────
+export const listCalcRules = () =>
+  prisma.calcRule.findMany({ orderBy: [{ division: "asc" }, { id: "asc" }] });
+
+export async function upsertCalcRule(input: CalcRule, actor: string) {
+  const data = {
+    division: input.division,
+    name: input.name,
+    ruleType: input.ruleType,
+    modelKeyFilter: input.modelKeyFilter,
+    unitLine: input.unitLine,
+    unitCall: input.unitCall,
+    ratioPercent: input.ratioPercent,
+    fixedDig: input.fixedDig,
+    active: input.active,
+  };
+  const rule = await prisma.calcRule.upsert({
+    where: { id: input.id },
+    update: data,
+    create: { id: input.id, ...data },
+  });
+  await audit(actor, "calcRule.upsert", "CalcRule", input.id, { division: input.division, ruleType: input.ruleType });
+  return rule;
+}
+
+// ─────────────────────────────────────────────
+// 契約（keiyaku取込）＋帰属＋Dig反映（要件 F-3）
+// ─────────────────────────────────────────────
+export const listContracts = (yearMonth: string) =>
+  prisma.contract.findMany({ where: { yearMonth }, include: { assignment: true }, orderBy: { id: "asc" } });
+
+function pickRule(rules: CalcRule[], division: string, modelKey: string): CalcRule | undefined {
+  return rules.find(
+    (r) => r.active && r.division === division && (!r.modelKeyFilter || r.modelKeyFilter === modelKey),
+  );
+}
+
+function toContract(row: {
+  id: string; contractNo: string | null; customerName: string; division: string; modelKey: string;
+  status: string; baseAmount: Prisma.Decimal; setupFee: Prisma.Decimal; initialFee: Prisma.Decimal;
+  termMonths: number; startDate: Date | null; lineItems: Prisma.JsonValue;
+}): Contract {
+  return {
+    id: row.id,
+    contractNo: row.contractNo,
+    customerName: row.customerName,
+    division: row.division,
+    modelKey: row.modelKey,
+    status: row.status,
+    baseAmount: row.baseAmount.toNumber(),
+    setupFee: row.setupFee.toNumber(),
+    initialFee: row.initialFee.toNumber(),
+    termMonths: row.termMonths,
+    startDate: row.startDate ? row.startDate.toISOString().slice(0, 10) : null,
+    lineItems: (row.lineItems as unknown as ContractLineItem[]) ?? [],
+  };
+}
+
+function toCalcRule(row: {
+  id: string; division: string; name: string; ruleType: string; modelKeyFilter: string | null;
+  unitLine: Prisma.Decimal; unitCall: Prisma.Decimal; ratioPercent: Prisma.Decimal; fixedDig: Prisma.Decimal; active: boolean;
+}): CalcRule {
+  return {
+    id: row.id, division: row.division, name: row.name,
+    ruleType: row.ruleType as CalcRule["ruleType"], modelKeyFilter: row.modelKeyFilter,
+    unitLine: row.unitLine.toNumber(), unitCall: row.unitCall.toNumber(),
+    ratioPercent: row.ratioPercent.toNumber(), fixedDig: row.fixedDig.toNumber(), active: row.active,
+  };
+}
+
+/** 契約ごとの計算結果（Dig＋帰属）を返す（プレビュー用）。 */
+export async function previewContractDig(yearMonth: string) {
+  const [contractRows, ruleRows] = await Promise.all([listContracts(yearMonth), listCalcRules()]);
+  const rules = ruleRows.map(toCalcRule);
+  return contractRows.map((row) => {
+    const contract = toContract(row);
+    const rule = pickRule(rules, contract.division, contract.modelKey);
+    const totalDig = rule ? computeContractDig(contract, rule) : 0;
+    const shares = ((row.assignment?.shares as unknown as AssignmentShare[]) ?? []);
+    const perPerson = rule && shares.length
+      ? splitDig(totalDig, { contractId: contract.id, source: "manual", shares })
+      : [];
+    return {
+      contractId: contract.id,
+      contractNo: contract.contractNo,
+      customerName: contract.customerName,
+      division: contract.division,
+      ruleName: rule?.name ?? null,
+      totalDig,
+      shares,
+      perPerson,
+    };
+  });
+}
+
+/** 契約の帰属（折半）を更新（後から修正可能・要件 F-3）。 */
+export async function updateAssignment(contractId: string, shares: AssignmentShare[], actor: string) {
+  const contract = await prisma.contract.findUnique({ where: { id: contractId } });
+  if (!contract) throw new NotFoundError("contract not found");
+  await prisma.contractAssignment.upsert({
+    where: { contractId },
+    update: { source: "manual", shares: shares as unknown as Prisma.InputJsonValue },
+    create: { contractId, source: "manual", shares: shares as unknown as Prisma.InputJsonValue },
+  });
+  await audit(actor, "assignment.update", "ContractAssignment", contractId, { shares: shares as unknown as Prisma.InputJsonValue });
+  return { contractId, shares };
+}
+
+/** 契約Dig → 各従業員の成果Digへ反映し、月次評価を再計算（要件 F-3）。 */
+export async function reflectContractDig(yearMonth: string, actor: string) {
+  const [contractRows, ruleRows] = await Promise.all([listContracts(yearMonth), listCalcRules()]);
+  const rules = ruleRows.map(toCalcRule);
+  const results = contractRows.map((row) => {
+    const contract = toContract(row);
+    const rule = pickRule(rules, contract.division, contract.modelKey);
+    const totalDig = rule ? computeContractDig(contract, rule) : 0;
+    const shares = ((row.assignment?.shares as unknown as AssignmentShare[]) ?? []);
+    const perPerson = rule && shares.length
+      ? splitDig(totalDig, { contractId: contract.id, source: "manual", shares })
+      : [];
+    return { contractId: contract.id, totalDig, perPerson };
+  });
+
+  const seikaByPerson = aggregateSeikaDig(results);
+  let updated = 0;
+  for (const [personId, seika] of seikaByPerson) {
+    const ev = await prisma.monthlyEvaluation.findUnique({
+      where: { yearMonth_personId: { yearMonth, personId } },
+    });
+    if (!ev) continue;
+    const bonus = ev.bonusDig.toNumber();
+    const loan = ev.loanDig.toNumber();
+    const monthlyBudget = ev.monthlyBudgetDig.toNumber();
+    const cumBudget = ev.cumulativeBudgetDig.toNumber();
+    const monthlyActual = seika + bonus + loan;
+    const mRate = achievementRate(monthlyActual, monthlyBudget);
+    const cRate = achievementRate(monthlyActual, cumBudget);
+    await prisma.monthlyEvaluation.update({
+      where: { yearMonth_personId: { yearMonth, personId } },
+      data: {
+        seikaDig: seika,
+        monthlyActualDig: monthlyActual,
+        monthlyRate: mRate,
+        monthlyRank: evaluationRank(mRate),
+        cumulativeActualDig: monthlyActual,
+        cumulativeRate: cRate,
+        cumulativeRank: evaluationRank(cRate),
+      },
+    });
+    updated += 1;
+  }
+  await audit(actor, "contract.reflect", "MonthlyEvaluation", yearMonth, { updated, contracts: results.length });
+  return { yearMonth, updated, contracts: results.length, perPerson: Object.fromEntries(seikaByPerson) };
+}
+
+// ─────────────────────────────────────────────
+// マスタ編集（Member / BonusDigItem / Setting・要件 F-1,2,4）
+// ─────────────────────────────────────────────
+export async function upsertMember(input: {
+  personId: string; name: string; division: string; position: string; jobType: string | null;
+  employmentType: string; basePay: number; positionBase: number; joinedOn: string;
+  evaluationCycle: string; status: string; actor: string;
+}) {
+  const data = {
+    name: input.name, division: input.division,
+    position: input.position as Prisma.MemberCreateInput["position"],
+    jobType: input.jobType as Prisma.MemberCreateInput["jobType"],
+    employmentType: input.employmentType as Prisma.MemberCreateInput["employmentType"],
+    basePay: input.basePay, positionBase: input.positionBase,
+    joinedOn: new Date(`${input.joinedOn}T00:00:00Z`),
+    evaluationCycle: input.evaluationCycle as Prisma.MemberCreateInput["evaluationCycle"],
+    status: input.status as Prisma.MemberCreateInput["status"],
+  };
+  const m = await prisma.member.upsert({ where: { personId: input.personId }, update: data, create: { personId: input.personId, ...data } });
+  await audit(input.actor, "member.upsert", "Member", input.personId, { name: input.name });
+  return m;
+}
+
+export async function deleteMember(personId: string, actor: string) {
+  const ev = await prisma.monthlyEvaluation.count({ where: { personId } });
+  if (ev > 0) throw new ConflictError("評価データが存在するため削除できません（退社ステータスに変更してください）");
+  await prisma.member.delete({ where: { personId } });
+  await audit(actor, "member.delete", "Member", personId, {});
+  return { personId };
+}
+
+export async function upsertBonusItem(input: {
+  itemId: string; category: string; name: string; grantDig: number; monthlyCapDig: number; description: string | null; enabled: boolean; actor: string;
+}) {
+  const data = { category: input.category, name: input.name, grantDig: input.grantDig, monthlyCapDig: input.monthlyCapDig, description: input.description, enabled: input.enabled };
+  const it = await prisma.bonusDigItem.upsert({ where: { itemId: input.itemId }, update: data, create: { itemId: input.itemId, ...data } });
+  await audit(input.actor, "bonusItem.upsert", "BonusDigItem", input.itemId, { name: input.name });
+  return it;
+}
+
+export async function updateSetting(input: {
+  yearMonth: string; budgetCoefficient: number; insuranceCoefficient: number; annualRatePct: number;
+  initialLoanDefault: number; loanTermMonthsDefault: number; commonCostFulltime: number; commonCostParttime: number; actor: string;
+}) {
+  const s = await prisma.setting.update({
+    where: { yearMonth: input.yearMonth },
+    data: {
+      budgetCoefficient: input.budgetCoefficient, insuranceCoefficient: input.insuranceCoefficient,
+      annualRatePct: input.annualRatePct, initialLoanDefault: input.initialLoanDefault,
+      loanTermMonthsDefault: input.loanTermMonthsDefault,
+      commonCostFulltime: input.commonCostFulltime, commonCostParttime: input.commonCostParttime,
+    },
+  });
+  await audit(input.actor, "setting.update", "Setting", input.yearMonth, {});
+  return s;
 }

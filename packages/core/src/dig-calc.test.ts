@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTING } from "@dig/contracts";
 import {
   achievementRate,
+  aggregateSeikaDig,
   buildInitialLoan,
+  computeContractDig,
   computeQuarterBalance,
   cumulativeBudgetDig,
   daysInMonth,
@@ -16,6 +18,7 @@ import {
   prorationCoefficient,
   residencyDays,
   seatCost,
+  splitDig,
   totalCost,
 } from "./dig-calc.js";
 
@@ -214,6 +217,89 @@ describe("金利 / 初回借入（ディグロス金融・v1.2）", () => {
       setting: changed,
     });
     expect(loan.monthlyRate).toBeCloseTo(0.005, 6);
+  });
+});
+
+describe("Dig獲得ルール（F-3・keiyaku連携）", () => {
+  const contract = {
+    id: "K-1",
+    contractNo: "C-001",
+    customerName: "テスト社",
+    division: "AIテレアポ事業部",
+    modelKey: "line_call",
+    status: "active",
+    baseAmount: 300_000,
+    setupFee: 0,
+    initialFee: 1_234_500,
+    termMonths: 12,
+    startDate: "2026-01-01",
+    lineItems: [
+      { key: "line", qty: 2, unit: 50000 },
+      { key: "call", qty: 3, unit: 50000 },
+    ],
+  };
+
+  it("回線コール単価: 回線2×5万 + コール3×5万 = 25万", () => {
+    const rule = { id: "r1", division: "AIテレアポ事業部", name: "AIテレアポ", ruleType: "回線コール単価" as const, modelKeyFilter: null, unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, active: true };
+    expect(computeContractDig(contract, rule)).toBe(250_000);
+  });
+
+  it("初回発注1to1: 1,234,500 → 千円切捨 1,234,000", () => {
+    const rule = { id: "r2", division: "アポプロ", name: "アポプロ", ruleType: "初回発注1to1" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, active: true };
+    expect(computeContractDig(contract, rule)).toBe(1_234_000);
+  });
+
+  it("月額基本料金割合: 30万 × 50% = 15万", () => {
+    const rule = { id: "r3", division: "x", name: "x", ruleType: "月額基本料金割合" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 50, fixedDig: 0, active: true };
+    expect(computeContractDig(contract, rule)).toBe(150_000);
+  });
+
+  it("modelKeyFilter 不一致 → 0", () => {
+    const rule = { id: "r4", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: "account", unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 99999, active: true };
+    expect(computeContractDig(contract, rule)).toBe(0);
+  });
+
+  it("canceled 契約 → 0", () => {
+    const rule = { id: "r5", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 50000, active: true };
+    expect(computeContractDig({ ...contract, status: "canceled" }, rule)).toBe(0);
+  });
+
+  it("折半: 25万を FS50%/IS50% で按分", () => {
+    const split = splitDig(250_000, {
+      contractId: "K-1",
+      source: "manual",
+      shares: [
+        { personId: "A", sharePercent: 50 },
+        { personId: "B", sharePercent: 50 },
+      ],
+    });
+    expect(split).toEqual([
+      { personId: "A", dig: 125_000 },
+      { personId: "B", dig: 125_000 },
+    ]);
+  });
+
+  it("折半端数は先頭者へ: 100を 3等分", () => {
+    const split = splitDig(100, {
+      contractId: "K-1",
+      source: "manual",
+      shares: [
+        { personId: "A", sharePercent: 33 },
+        { personId: "B", sharePercent: 33 },
+        { personId: "C", sharePercent: 34 },
+      ],
+    });
+    expect(split.reduce((s, r) => s + r.dig, 0)).toBe(100);
+    expect(split[0]!.personId).toBe("A");
+  });
+
+  it("aggregateSeikaDig: 複数契約の従業員別合計", () => {
+    const agg = aggregateSeikaDig([
+      { contractId: "1", totalDig: 100, perPerson: [{ personId: "A", dig: 100 }] },
+      { contractId: "2", totalDig: 200, perPerson: [{ personId: "A", dig: 100 }, { personId: "B", dig: 100 }] },
+    ]);
+    expect(agg.get("A")).toBe(200);
+    expect(agg.get("B")).toBe(100);
   });
 });
 

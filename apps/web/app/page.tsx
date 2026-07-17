@@ -13,7 +13,9 @@ import {
 import { DEFAULT_SETTING } from "@dig/contracts";
 import { promotionStep } from "@dig/core";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
+import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
+import { RulesAndContracts } from "@/components/rules";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
 import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
 
@@ -22,8 +24,10 @@ const TABS: Tab[] = [
   { key: "members", label: "メンバー評価", sub: "月次更新" },
   { key: "bank", label: "Digloss Bank", sub: "借入・返済" },
   { key: "finance", label: "金融管理", sub: "承認・金利" },
+  { key: "rules", label: "Dig獲得ルール", sub: "契約→Dig反映" },
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
+  { key: "master", label: "従業員マスタ", sub: "編集" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
   { key: "settings", label: "設定", sub: "マスタ" },
 ];
@@ -122,10 +126,14 @@ export default function Page() {
           <DiglossBank />
         ) : tab === "finance" ? (
           <FinanceConsole />
+        ) : tab === "rules" ? (
+          <RulesAndContracts />
         ) : tab === "bonus" ? (
           <BonusDig />
         ) : tab === "txn" ? (
           <TransactionLog />
+        ) : tab === "master" ? (
+          <MemberMaster />
         ) : tab === "release" ? (
           <ReleaseNotes />
         ) : (

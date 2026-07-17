@@ -4,6 +4,10 @@
  * v1.1 反映: 累計予算Dig係数 四半期×3 / 半期×6（Q2）。
  */
 import type {
+  CalcRule,
+  Contract,
+  ContractAssignment,
+  ContractDigResult,
   EmploymentType,
   EvaluationCycle,
   EvaluationLeg,
@@ -291,6 +295,77 @@ export function computeQuarterBalance(args: {
     incentive: incentiveAmount(balance),
     rank: evaluationRank(rate),
   };
+}
+
+// ── Dig獲得ルール適用（要件 F-3・keiyaku連携） ──
+/** 千円単位切り捨て */
+function floorThousand(v: number): number {
+  return Math.floor(v / 1000) * 1000;
+}
+
+/** 1契約にルールを適用して付与Digを算出（要件 F-3）。 */
+export function computeContractDig(contract: Contract, rule: CalcRule): number {
+  if (!rule.active) return 0;
+  if (rule.modelKeyFilter && rule.modelKeyFilter !== contract.modelKey) return 0;
+  // キャンセル・停止は対象外
+  if (contract.status === "canceled" || contract.status === "paused") return 0;
+
+  switch (rule.ruleType) {
+    case "回線コール単価": {
+      const line = contract.lineItems
+        .filter((li) => li.key === "line")
+        .reduce((s, li) => s + li.qty, 0);
+      const call = contract.lineItems
+        .filter((li) => li.key === "call")
+        .reduce((s, li) => s + li.qty, 0);
+      return line * rule.unitLine + call * rule.unitCall;
+    }
+    case "初回発注1to1":
+      return floorThousand(contract.initialFee);
+    case "月額基本料金割合":
+      return Math.round((contract.baseAmount * rule.ratioPercent) / 100);
+    case "固定Dig":
+      return rule.fixedDig;
+    default:
+      return 0;
+  }
+}
+
+/** 合計Digを帰属(share%)で按分（折半対応・要件 F-3）。端数は先頭者へ寄せる。 */
+export function splitDig(
+  total: number,
+  assignment: ContractAssignment,
+): { personId: string; dig: number }[] {
+  const sumShare = assignment.shares.reduce((s, a) => s + a.sharePercent, 0);
+  if (sumShare <= 0) return [];
+  const raw = assignment.shares.map((a) => ({
+    personId: a.personId,
+    dig: Math.floor((total * a.sharePercent) / sumShare),
+  }));
+  const distributed = raw.reduce((s, r) => s + r.dig, 0);
+  if (raw.length > 0) raw[0]!.dig += total - distributed; // 端数調整
+  return raw;
+}
+
+/** 契約Dig計算＋帰属を1件分まとめる。 */
+export function resolveContractDig(
+  contract: Contract,
+  rule: CalcRule,
+  assignment: ContractAssignment,
+): ContractDigResult {
+  const totalDig = computeContractDig(contract, rule);
+  return { contractId: contract.id, totalDig, perPerson: splitDig(totalDig, assignment) };
+}
+
+/** 複数契約から従業員別の成果Dig合計を集計（Dig反映用）。 */
+export function aggregateSeikaDig(results: ContractDigResult[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const r of results) {
+    for (const p of r.perPerson) {
+      map.set(p.personId, (map.get(p.personId) ?? 0) + p.dig);
+    }
+  }
+  return map;
 }
 
 // ── 昇降級判定（要件 F-8） ──────────────────────
