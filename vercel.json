@@ -3,5 +3,5 @@
   "buildCommand": "pnpm --filter @dig/contracts build && pnpm --filter @dig/core build && pnpm --workspace-root run db:generate && pnpm --workspace-root run db:deploy && pnpm --filter @dig/web build",
   "installCommand": "pnpm install",
   "framework": "nextjs",
-  "outputDirectory": "apps/web/.next"
+  "outputDirectory": ".next"
 }
