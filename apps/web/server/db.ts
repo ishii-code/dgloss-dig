@@ -9,5 +9,7 @@ export const prisma =
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
-/** DATABASE_URL 未設定なら false（UIはモックにフォールバック） */
-export const hasDatabase = Boolean(process.env.DATABASE_URL);
+/** DB接続文字列が無ければ false（UIはモックにフォールバック） */
+export const hasDatabase = Boolean(
+  process.env.POSTGRES_PRISMA_URL || process.env.DATABASE_URL,
+);

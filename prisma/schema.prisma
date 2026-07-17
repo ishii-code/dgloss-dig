@@ -8,11 +8,10 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // 実行時（Prisma Client）はプール接続。Vercel Postgres/Neon の POSTGRES_PRISMA_URL 等を割当。
-  url = env("DATABASE_URL")
-  // マイグレーション用の直結（非プール）。Vercel Postgres の POSTGRES_URL_NON_POOLING 等。
-  // ローカルは DATABASE_URL と同値でよい。
-  directUrl = env("DIRECT_URL")
+  // 実行時（Prisma Client）はプール接続。Vercel Postgres/Neon が自動注入する POSTGRES_PRISMA_URL を使用。
+  url = env("POSTGRES_PRISMA_URL")
+  // マイグレーション用の直結（非プール）。Vercel Postgres の POSTGRES_URL_NON_POOLING。
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 /// Dig獲得ルール（事業部別・要件 F-3）
