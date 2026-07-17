@@ -354,3 +354,58 @@ export interface ContractDigResult {
   /** 従業員別の按分Dig */
   perPerson: { personId: string; dig: number }[];
 }
+
+// ─────────────────────────────────────────────
+// アカウント・権限（RBAC）
+// ─────────────────────────────────────────────
+/** 権限ロール。SUPER_ADMIN > ADMIN > USER */
+export const Role = z.enum(["SUPER_ADMIN", "ADMIN", "USER"]);
+export type Role = z.infer<typeof Role>;
+
+/** ロールの権限レベル（数値が大きいほど強い） */
+export const ROLE_LEVEL: Record<Role, number> = {
+  USER: 0,
+  ADMIN: 1,
+  SUPER_ADMIN: 2,
+};
+
+export const ROLE_LABEL: Record<Role, string> = {
+  SUPER_ADMIN: "スーパーADMIN",
+  ADMIN: "ADMIN",
+  USER: "ユーザー",
+};
+
+export const AccountSchema = z.object({
+  id: z.string().min(1).max(64), // メール等
+  email: z.string().email(),
+  name: z.string().min(1).max(64),
+  role: Role,
+  /** 従業員マスタとの紐付け（任意） */
+  personId: z.string().max(32).nullable(),
+  active: z.boolean(),
+});
+export type Account = z.infer<typeof AccountSchema>;
+
+/**
+ * 画面（タブ）へのアクセスに必要な最低ロールレベル。
+ * finance(金融承認)/master(従業員マスタ)/accounts(アカウント管理)= SUPER_ADMIN のみ。
+ */
+export const TAB_MIN_LEVEL: Record<string, number> = {
+  monitor: 0,
+  members: 0,
+  bank: 0,
+  bonus: 0,
+  txn: 0,
+  release: 0,
+  rules: 1, // ADMIN 以上
+  settings: 1, // ADMIN 以上
+  finance: 2, // SUPER_ADMIN のみ（ディグロス金融 承認）
+  master: 2, // SUPER_ADMIN のみ（従業員マスタ）
+  accounts: 2, // SUPER_ADMIN のみ（アカウント管理）
+};
+
+/** ロールが対象タブにアクセスできるか。 */
+export function canAccessTab(role: Role, tabKey: string): boolean {
+  const need = TAB_MIN_LEVEL[tabKey] ?? 0;
+  return ROLE_LEVEL[role] >= need;
+}

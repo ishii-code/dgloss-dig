@@ -232,8 +232,22 @@ async function main() {
     });
   }
 
+  // アカウント（RBAC）
+  const accounts = [
+    { id: "gou.ishii@dgloss.co.jp", email: "gou.ishii@dgloss.co.jp", name: "石井豪", role: "SUPER_ADMIN" as const, personId: null, active: true },
+    { id: "eguchi@dgloss.co.jp", email: "eguchi@dgloss.co.jp", name: "江口智隆", role: "SUPER_ADMIN" as const, personId: "B0000071", active: true },
+    { id: "kakehata@dgloss.co.jp", email: "kakehata@dgloss.co.jp", name: "掛端光", role: "ADMIN" as const, personId: "B0000064", active: true },
+    { id: "tsuchiya@dgloss.co.jp", email: "tsuchiya@dgloss.co.jp", name: "土屋知己", role: "ADMIN" as const, personId: "B0000068", active: true },
+    { id: "horikawa@dgloss.co.jp", email: "horikawa@dgloss.co.jp", name: "堀川璃歩", role: "USER" as const, personId: "B0000097", active: true },
+    { id: "aoki@dgloss.co.jp", email: "aoki@dgloss.co.jp", name: "青木未来", role: "USER" as const, personId: "B0000087", active: true },
+  ];
+  for (const a of accounts) {
+    await prisma.account.upsert({ where: { id: a.id }, update: a, create: a });
+  }
+
   const counts = {
     members: await prisma.member.count(),
+    accounts: await prisma.account.count(),
     evaluations: await prisma.monthlyEvaluation.count(),
     loans: await prisma.loan.count(),
     bonusItems: await prisma.bonusDigItem.count(),
