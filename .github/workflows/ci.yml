@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm --filter @dig/contracts build
+      - run: pnpm --filter @dig/core build
+      - name: Typecheck
+        run: pnpm -r typecheck
+      - name: Test (core)
+        run: pnpm --filter @dig/core test
+      - name: Build (web)
+        run: pnpm --filter @dig/web build
