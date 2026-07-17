@@ -1,12 +1,13 @@
 packages:
   - "packages/*"
   - "apps/*"
+# 依存のビルドスクリプトを明示許可（pnpm 11 / CI で ERR_PNPM_IGNORED_BUILDS を回避）
 allowBuilds:
-  '@prisma/client': set this to true or false
-  '@prisma/engines': set this to true or false
-  esbuild: set this to true or false
-  prisma: set this to true or false
-  sharp: set this to true or false
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  sharp: true
 onlyBuiltDependencies:
   - esbuild
   - sharp
