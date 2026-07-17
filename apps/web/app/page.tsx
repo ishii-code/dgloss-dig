@@ -10,7 +10,7 @@ import {
   type Tab,
 } from "@/components/ui";
 import { canAccessTab, DEFAULT_SETTING, type Role } from "@dig/contracts";
-import { promotionStep } from "@dig/core";
+import { promotionRate, promotionStepDual } from "@dig/core";
 import { AccountsAdmin } from "@/components/accounts";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
 import type { CurrentAccount } from "@/components/loan-thread";
@@ -19,6 +19,7 @@ import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
 import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
+import { SalaryTable } from "@/components/salary-table";
 import { apiGet } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
@@ -34,6 +35,7 @@ const TABS: Tab[] = [
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "master", label: "従業員マスタ", sub: "編集" },
+  { key: "salary", label: "給与テーブル", sub: "全社統一" },
   { key: "accounts", label: "アカウント管理", sub: "権限" },
   { key: "requests", label: "改善リクエスト", sub: "投稿・対応" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
@@ -180,6 +182,8 @@ export default function Page() {
           <TransactionLog />
         ) : activeTab === "master" ? (
           <MemberMaster />
+        ) : activeTab === "salary" ? (
+          <SalaryTable />
         ) : activeTab === "accounts" ? (
           <AccountsAdmin />
         ) : activeTab === "requests" ? (
@@ -232,7 +236,12 @@ function MemberTable({ leg }: { leg: Leg }) {
                 </td>
                 <td className="px-4 py-2.5 text-center">
                   {(() => {
-                    const step = promotionStep(l.achievementRate, DEFAULT_SETTING);
+                    // Q1案1: 昇級は借入抜き(成果+ボーナス)、降級は実績Dig(借入込み)
+                    const step = promotionStepDual({
+                      actualRate: l.achievementRate,
+                      promoRate: promotionRate(m.eval.seikaDig, m.eval.bonusDig, budget),
+                      setting: DEFAULT_SETTING,
+                    });
                     return (
                       <span
                         className={`rounded-pill px-2 py-0.5 text-[11px] font-bold ${promotionStyle(step)}`}
