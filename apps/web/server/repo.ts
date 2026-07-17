@@ -675,3 +675,136 @@ export async function finalizeMonth(yearMonth: string, actor: string) {
   await audit(actor, "evaluation.finalize", "MonthlyEvaluation", yearMonth, { count: evals.length });
   return { yearMonth, finalized: evals.length, snapshot };
 }
+
+// ─────────────────────────────────────────────
+// Q3: 超過分の持ち越し/インセン選択
+// ─────────────────────────────────────────────
+export async function setSurplusChoice(
+  yearMonth: string,
+  personId: string,
+  choice: "incentive" | "carryover",
+  actor: string,
+) {
+  const ev = await prisma.monthlyEvaluation.findUnique({
+    where: { yearMonth_personId: { yearMonth, personId } },
+  });
+  if (!ev) throw new NotFoundError("評価が見つかりません");
+  if (ev.finalized) throw new ConflictError("確定済みのため変更できません");
+  await prisma.monthlyEvaluation.update({
+    where: { yearMonth_personId: { yearMonth, personId } },
+    data: { surplusChoice: choice },
+  });
+  await audit(actor, "surplus.choice", "MonthlyEvaluation", `${yearMonth}/${personId}`, { choice });
+  return { yearMonth, personId, surplusChoice: choice };
+}
+
+// ─────────────────────────────────────────────
+// Q13: 成果Dig手入力の承認フロー（最終承認=スーパーADMIN）
+// ─────────────────────────────────────────────
+/** 成果Digを手入力（例外）→ 未承認(draft)にして再計算。 */
+export async function submitSeika(
+  yearMonth: string,
+  personId: string,
+  seika: number,
+  inputBy: string,
+) {
+  const ev = await prisma.monthlyEvaluation.findUnique({
+    where: { yearMonth_personId: { yearMonth, personId } },
+  });
+  if (!ev) throw new NotFoundError("評価が見つかりません");
+  if (ev.finalized) throw new ConflictError("確定済みのため変更できません");
+  const bonus = ev.bonusDig.toNumber();
+  const loan = ev.loanDig.toNumber();
+  const budget = ev.monthlyBudgetDig.toNumber();
+  const actual = seika + bonus + loan;
+  await prisma.monthlyEvaluation.update({
+    where: { yearMonth_personId: { yearMonth, personId } },
+    data: {
+      seikaDig: seika,
+      monthlyActualDig: actual,
+      monthlyRate: budget ? actual / budget : 0,
+      monthlyRank: evaluationRank(budget ? actual / budget : 0),
+      seikaApproved: false,
+      seikaInputBy: inputBy,
+      seikaApprovedBy: null,
+    },
+  });
+  await audit(inputBy, "seika.submit", "MonthlyEvaluation", `${yearMonth}/${personId}`, { seika });
+  return { yearMonth, personId, seikaApproved: false };
+}
+
+/** 手入力成果Digを承認（スーパーADMIN）。 */
+export async function approveSeika(yearMonth: string, personId: string, approver: string) {
+  const ev = await prisma.monthlyEvaluation.findUnique({
+    where: { yearMonth_personId: { yearMonth, personId } },
+  });
+  if (!ev) throw new NotFoundError("評価が見つかりません");
+  if (ev.seikaApproved) throw new ConflictError("既に承認済みです");
+  await prisma.monthlyEvaluation.update({
+    where: { yearMonth_personId: { yearMonth, personId } },
+    data: { seikaApproved: true, seikaApprovedBy: approver },
+  });
+  await audit(approver, "seika.approve", "MonthlyEvaluation", `${yearMonth}/${personId}`, {});
+  return { yearMonth, personId, seikaApproved: true };
+}
+
+export const listSeikaPending = () =>
+  prisma.monthlyEvaluation.findMany({
+    where: { seikaApproved: false },
+    orderBy: { personId: "asc" },
+  });
+
+// ─────────────────────────────────────────────
+// Q14: 退社時の借入残高精算（グループ負担割合・相殺）
+// ─────────────────────────────────────────────
+/** 退社者（status=退社）と会社借入残高（承認済ローン元本合計）。 */
+export async function listRetirementCandidates() {
+  const retired = await prisma.member.findMany({ where: { status: "退社" } });
+  const out = [];
+  for (const m of retired) {
+    const loans = await prisma.loan.findMany({
+      where: { borrowerId: m.personId, status: "承認済" },
+    });
+    const balance = loans.reduce((s, l) => s + l.principal.toNumber(), 0);
+    const existing = await prisma.retirementSettlement.findFirst({ where: { personId: m.personId } });
+    out.push({
+      personId: m.personId,
+      name: m.name,
+      division: m.division,
+      groupLeaderId: m.groupLeaderId,
+      loanBalance: balance,
+      settled: Boolean(existing),
+    });
+  }
+  return out;
+}
+
+/** グループ内の負担配分を登録（Q14案1）。合計が残高と一致することを検証。 */
+export async function settleRetirement(input: {
+  personId: string;
+  yearMonth: string;
+  loanBalance: number;
+  shares: { personId: string; amount: number }[];
+  note: string | null;
+  actor: string;
+}) {
+  const sum = input.shares.reduce((s, x) => s + x.amount, 0);
+  if (Math.round(sum) !== Math.round(input.loanBalance)) {
+    throw new ConflictError(`負担合計(${sum})が借入残高(${input.loanBalance})と一致しません`);
+  }
+  const rec = await prisma.retirementSettlement.create({
+    data: {
+      personId: input.personId,
+      yearMonth: input.yearMonth,
+      loanBalance: input.loanBalance,
+      shares: input.shares as unknown as Prisma.InputJsonValue,
+      note: input.note,
+      settledBy: input.actor,
+    },
+  });
+  await audit(input.actor, "retirement.settle", "RetirementSettlement", String(rec.id), {
+    personId: input.personId,
+    loanBalance: input.loanBalance,
+  });
+  return { id: rec.id };
+}
