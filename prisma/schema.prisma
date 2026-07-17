@@ -9,6 +9,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// 監査ログ（設定変更・借入承認・送金・金利変更等の操作記録・要件 §10）
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  actor     String // 操作者（Person ID or システム）
+  action    String // 例: loan.approve / setting.rate.update / bonus.create
+  entity    String // 対象エンティティ
+  entityId  String?
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+}
+
 enum EmploymentType {
   正社員
   アルバイト
