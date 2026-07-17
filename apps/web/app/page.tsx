@@ -10,8 +10,9 @@ import {
   TabNav,
   type Tab,
 } from "@/components/ui";
-import { DEFAULT_SETTING } from "@dig/contracts";
+import { canAccessTab, DEFAULT_SETTING, type Role } from "@dig/contracts";
 import { promotionStep } from "@dig/core";
+import { AccountsAdmin } from "@/components/accounts";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
 import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
@@ -28,21 +29,30 @@ const TABS: Tab[] = [
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "master", label: "従業員マスタ", sub: "編集" },
+  { key: "accounts", label: "アカウント管理", sub: "権限" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
   { key: "settings", label: "設定", sub: "マスタ" },
 ];
 
+const ROLES: Role[] = ["SUPER_ADMIN", "ADMIN", "USER"];
+
 export default function Page() {
   const [tab, setTab] = useState("monitor");
   const [leg, setLeg] = useState<Leg>("monthly");
+  // ログイン中ロール（本番は Supabase Auth 由来。現状は切替で権限デモ）
+  const [role, setRole] = useState<Role>("SUPER_ADMIN");
 
   const t = useMemo(() => totals(leg), [leg]);
   const divs = useMemo(() => byDivision(leg), [leg]);
 
+  // ロールで表示可能なタブに絞り込み
+  const visibleTabs = useMemo(() => TABS.filter((t) => canAccessTab(role, t.key)), [role]);
+  const activeTab = canAccessTab(role, tab) ? tab : "monitor";
+
   return (
     <div className="min-h-screen bg-white">
-      <Header />
-      <TabNav tabs={TABS} active={tab} onSelect={setTab} />
+      <Header role={role} onRoleChange={setRole} roles={ROLES} />
+      <TabNav tabs={visibleTabs} active={activeTab} onSelect={setTab} />
 
       <main className="mx-auto max-w-[1200px] px-6 pb-20">
         {/* フィルタ行 */}
@@ -70,7 +80,7 @@ export default function Page() {
           </span>
         </div>
 
-        {tab === "monitor" ? (
+        {activeTab === "monitor" ? (
           <>
             {/* 全社 */}
             <SectionHeader title="全社" note={`${MEMBERS.length}名の合計`} />
@@ -117,24 +127,26 @@ export default function Page() {
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
             <MemberTable leg={leg} />
           </>
-        ) : tab === "members" ? (
+        ) : activeTab === "members" ? (
           <>
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
             <MemberTable leg={leg} />
           </>
-        ) : tab === "bank" ? (
+        ) : activeTab === "bank" ? (
           <DiglossBank />
-        ) : tab === "finance" ? (
+        ) : activeTab === "finance" ? (
           <FinanceConsole />
-        ) : tab === "rules" ? (
+        ) : activeTab === "rules" ? (
           <RulesAndContracts />
-        ) : tab === "bonus" ? (
+        ) : activeTab === "bonus" ? (
           <BonusDig />
-        ) : tab === "txn" ? (
+        ) : activeTab === "txn" ? (
           <TransactionLog />
-        ) : tab === "master" ? (
+        ) : activeTab === "master" ? (
           <MemberMaster />
-        ) : tab === "release" ? (
+        ) : activeTab === "accounts" ? (
+          <AccountsAdmin />
+        ) : activeTab === "release" ? (
           <ReleaseNotes />
         ) : (
           <SettingsView />

@@ -381,3 +381,28 @@ export async function updateSetting(input: {
   await audit(input.actor, "setting.update", "Setting", input.yearMonth, {});
   return s;
 }
+
+// ─────────────────────────────────────────────
+// アカウント・権限（RBAC）
+// ─────────────────────────────────────────────
+export const listAccounts = () =>
+  prisma.account.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] });
+
+export async function upsertAccount(input: {
+  id: string; email: string; name: string; role: string; personId: string | null; active: boolean; actor: string;
+}) {
+  const data = {
+    email: input.email, name: input.name,
+    role: input.role as Prisma.AccountCreateInput["role"],
+    personId: input.personId, active: input.active,
+  };
+  const acc = await prisma.account.upsert({ where: { id: input.id }, update: data, create: { id: input.id, ...data } });
+  await audit(input.actor, "account.upsert", "Account", input.id, { role: input.role });
+  return acc;
+}
+
+export async function deleteAccount(id: string, actor: string) {
+  await prisma.account.delete({ where: { id } });
+  await audit(actor, "account.delete", "Account", id, {});
+  return { id };
+}

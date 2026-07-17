@@ -127,6 +127,26 @@ enum CalcRuleType {
   固定Dig
 }
 
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  USER
+}
+
+/// アカウント（RBAC）。SUPER_ADMIN のみ金融承認・従業員マスタ・アカウント管理にアクセス可。
+model Account {
+  id        String   @id // メール等
+  email     String   @unique
+  name      String
+  role      Role     @default(USER)
+  personId  String? // 従業員マスタとの紐付け（任意）
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+}
+
 /// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。
 model Setting {
   yearMonth            String   @id // YYYY-MM

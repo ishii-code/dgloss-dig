@@ -1,7 +1,16 @@
+import { ROLE_LABEL, type Role } from "@dig/contracts";
 import { man, pct, rankStyle, rateColor } from "@/lib/format";
 
 // ── ヘッダ（社内システム: ロゴ左上・BRAND §2） ──
-export function Header() {
+export function Header({
+  role,
+  onRoleChange,
+  roles,
+}: {
+  role: Role;
+  onRoleChange: (r: Role) => void;
+  roles: Role[];
+}) {
   return (
     <header className="border-b border-surface-border bg-white">
       <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-3">
@@ -15,13 +24,28 @@ export function Header() {
             v0.1.0
           </span>
         </div>
-        <div className="flex items-center gap-4 text-xs text-ink-muted">
+        <div className="flex items-center gap-3 text-xs text-ink-muted">
+          {/* ロール切替（デモ用・本番は Supabase Auth 由来） */}
+          <label className="flex items-center gap-1">
+            <span className="hidden sm:inline">権限</span>
+            <select
+              value={role}
+              onChange={(e) => onRoleChange(e.target.value as Role)}
+              className="rounded-card border border-surface-border px-2 py-1 font-semibold text-ink"
+            >
+              {roles.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABEL[r]}
+                </option>
+              ))}
+            </select>
+          </label>
           <span className="hidden sm:inline">
             <span className="mr-1 inline-block h-2 w-2 rounded-full bg-semantic-success align-middle" />
             takeshi.ishii@dgloss.co.jp
           </span>
           <span className="hidden text-brand-primary sm:inline">サインアウト</span>
-          <span>データ更新: 2026-01-31 05:04</span>
+          <span className="hidden md:inline">データ更新: 2026-01-31 05:04</span>
         </div>
       </div>
     </header>
