@@ -14,9 +14,12 @@ import {
   monthlyBudgetDig,
   monthlyRateFromAnnual,
   mround,
+  promotionRate,
   promotionStep,
+  promotionStepDual,
   prorationCoefficient,
   residencyDays,
+  salaryGradeMove,
   seatCost,
   splitDig,
   totalCost,
@@ -301,6 +304,42 @@ describe("Dig獲得ルール（F-3・keiyaku連携）", () => {
     ]);
     expect(agg.get("A")).toBe(200);
     expect(agg.get("B")).toBe(100);
+  });
+});
+
+describe("2系統昇降級（Q1案1・借入は昇級に効かせない）", () => {
+  it("借入で達成率1.2でも成果が乏しければ昇級しない", () => {
+    // 実績込みrate=1.2(借入で嵩上げ) / 成果+ボーナスrate=0.3
+    const step = promotionStepDual({ actualRate: 1.2, promoRate: 0.3, setting: S });
+    expect(step).toBe(0); // 昇級せず・降級も回避
+  });
+  it("成果で達成率1.2なら2段昇級", () => {
+    expect(promotionStepDual({ actualRate: 1.2, promoRate: 1.2, setting: S })).toBe(2);
+  });
+  it("借入込みでも実績rate0.4なら降級（借入で埋まらなければ降級）", () => {
+    expect(promotionStepDual({ actualRate: 0.4, promoRate: 0.4, setting: S })).toBe(-2);
+  });
+  it("promotionRate: (成果+ボーナス)/予算", () => {
+    expect(promotionRate(400000, 100000, 1000000)).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("給与テーブル昇降級（Q6・16期人事制度）", () => {
+  it("マネージャー(D) 基準0から1段昇級 → 行9・56万", () => {
+    // 基準0の1つ上=行9
+    expect(salaryGradeMove("D", 0, 1)).toEqual({ row: 9, amount: 560000 });
+  });
+  it("マネージャー(D) 基準0から1段降級 → 行10・52.5万", () => {
+    expect(salaryGradeMove("D", 0, -1)).toEqual({ row: 10, amount: 525000 });
+  });
+  it("一般(A) 基準0から2段昇級 → 行8・27.5万", () => {
+    expect(salaryGradeMove("A", 0, 2)).toEqual({ row: 8, amount: 275000 });
+  });
+  it("最上位でクランプ（行1超えない）", () => {
+    expect(salaryGradeMove("A", 1, 5).row).toBe(1);
+  });
+  it("最下位でクランプ（行18超えない）", () => {
+    expect(salaryGradeMove("A", 18, -5).row).toBe(18);
   });
 });
 

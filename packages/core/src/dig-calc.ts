@@ -19,7 +19,7 @@ import type {
   Rank,
   Setting,
 } from "@dig/contracts";
-import { COMPANY_LENDER, INCENTIVE_RATE } from "@dig/contracts";
+import { COMPANY_LENDER, INCENTIVE_RATE, SALARY_ROW_ORDER, SALARY_TABLE } from "@dig/contracts";
 
 // ── 日付ユーティリティ ─────────────────────────
 const MS_PER_DAY = 86_400_000;
@@ -377,4 +377,54 @@ export function promotionStep(rate: number, setting: Setting): PromotionStep {
   if (rate < p.downTwo) return -2;
   if (rate < p.downOne) return -1;
   return 0;
+}
+
+/**
+ * 昇級用の達成率（借入抜き・Q1案1）。
+ * 借入は「降級回避」のみに効かせ、昇級は成果＋ボーナスで判定する。
+ * - 降級/評価ランク: 実績Dig（借入込み）で判定（従来どおり achievementRate）
+ * - 昇級: この rate（借入抜き）で判定
+ */
+export function promotionRate(seika: number, bonus: number, budget: number): number {
+  return achievementRate(seika + bonus, budget);
+}
+
+/**
+ * 2系統の昇降級段数（Q1案1）。
+ * 昇級は借入抜きレート、降級は借入込みレートで判定し、両者を合成する。
+ */
+export function promotionStepDual(args: {
+  actualRate: number; // 借入込み（降級・評価用）
+  promoRate: number; // 借入抜き（昇級用）
+  setting: Setting;
+}): PromotionStep {
+  const p = args.setting.promotion;
+  // 昇級は借入抜きで
+  if (args.promoRate >= p.upTwo) return 2;
+  if (args.promoRate >= p.upOne) return 1;
+  // 降級は借入込みで（借入で降級回避）
+  if (args.actualRate < p.downTwo) return -2;
+  if (args.actualRate < p.downOne) return -1;
+  return 0;
+}
+
+// ── 全社統一給与テーブル（Q6・16期人事制度） ──
+/**
+ * 昇降級段数に応じてラダー上を移動し、移動後の行と月額総支給を返す。
+ * step>0=昇級（上へ・上げピッチ）、step<0=降級（下へ・下げピッチ）。範囲外はクランプ。
+ */
+export function salaryGradeMove(
+  grade: string,
+  currentRow: number,
+  step: number,
+): { row: number; amount: number } {
+  const table = SALARY_TABLE[grade];
+  if (!table) throw new Error(`unknown grade: ${grade}`);
+  const order = SALARY_ROW_ORDER;
+  const idx = order.indexOf(currentRow);
+  if (idx < 0) throw new Error(`invalid row: ${currentRow}`);
+  // step>0（昇級）は order 上で index を減らす（上＝高給）
+  const newIdx = Math.min(Math.max(idx - step, 0), order.length - 1);
+  const row = order[newIdx]!;
+  return { row, amount: table[row]! };
 }

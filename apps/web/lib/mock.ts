@@ -63,9 +63,10 @@ export const MEMBERS: MemberRow[] = SEEDS.map((s) => {
     loanDig: s.loanDig,
     setting: DEFAULT_SETTING,
   });
+  // インセン原資=成果Digのみ（Q2/Q5案2: 残高=max(成果−目標,0)+ボーナス、借入は除外）
   const qb = computeQuarterBalance({
     personId: s.personId,
-    gross: ev.monthly.actualDig,
+    gross: ev.seikaDig,
     target: ev.monthlyBudgetDig,
     bonus: s.bonusDig,
   });
