@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import {
   BigMetricCard,
   DivisionCard,
@@ -14,10 +13,14 @@ import { canAccessTab, DEFAULT_SETTING, type Role } from "@dig/contracts";
 import { promotionStep } from "@dig/core";
 import { AccountsAdmin } from "@/components/accounts";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
+import type { CurrentAccount } from "@/components/loan-thread";
+import { LoanApply } from "@/components/loans-apply";
 import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
 import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
+import { apiGet } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
 import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
 
@@ -25,6 +28,7 @@ const TABS: Tab[] = [
   { key: "monitor", label: "予実モニター", sub: "毎日更新" },
   { key: "members", label: "メンバー評価", sub: "月次更新" },
   { key: "bank", label: "Digloss Bank", sub: "借入・返済" },
+  { key: "borrow-apply", label: "借入申請", sub: "会社/相対" },
   { key: "finance", label: "金融管理", sub: "承認・金利" },
   { key: "rules", label: "Dig獲得ルール", sub: "契約→Dig反映" },
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
@@ -38,23 +42,51 @@ const TABS: Tab[] = [
 
 const ROLES: Role[] = ["SUPER_ADMIN", "ADMIN", "USER"];
 
+// ログイン中アカウント（本番は Supabase Auth 由来。デモはロール→代表アカウント）
+const ACCOUNTS: Record<Role, CurrentAccount> = {
+  SUPER_ADMIN: { id: "gou.ishii@dgloss.co.jp", name: "石井豪", personId: null, role: "SUPER_ADMIN" },
+  ADMIN: { id: "kakehata@dgloss.co.jp", name: "掛端光", personId: "B0000064", role: "ADMIN" },
+  USER: { id: "horikawa@dgloss.co.jp", name: "堀川璃歩", personId: "B0000097", role: "USER" },
+};
+
 export default function Page() {
   const [tab, setTab] = useState("monitor");
   const [leg, setLeg] = useState<Leg>("monthly");
   // ログイン中ロール（本番は Supabase Auth 由来。現状は切替で権限デモ）
   const [role, setRole] = useState<Role>("SUPER_ADMIN");
+  const [unread, setUnread] = useState(0);
 
+  const account = ACCOUNTS[role];
   const t = useMemo(() => totals(leg), [leg]);
   const divs = useMemo(() => byDivision(leg), [leg]);
+
+  // 未読数（iPhoneバッジ風）を取得
+  const refreshUnread = useCallback(async () => {
+    try {
+      const u = await apiGet<{ total: number }>(`/api/loans/unread?accountId=${account.id}`);
+      setUnread(u.total);
+    } catch {
+      setUnread(0);
+    }
+  }, [account.id]);
+  useEffect(() => {
+    void refreshUnread();
+  }, [refreshUnread]);
 
   // ロールで表示可能なタブに絞り込み
   const visibleTabs = useMemo(() => TABS.filter((t) => canAccessTab(role, t.key)), [role]);
   const activeTab = canAccessTab(role, tab) ? tab : "monitor";
 
+  // 未読バッジ: 借入申請（申請者）＋金融管理（承認者=SUPER_ADMIN）
+  const badges: Record<string, number> = {
+    "borrow-apply": unread,
+    ...(role === "SUPER_ADMIN" ? { finance: unread } : {}),
+  };
+
   return (
     <div className="min-h-screen bg-white">
       <Header role={role} onRoleChange={setRole} roles={ROLES} />
-      <TabNav tabs={visibleTabs} active={activeTab} onSelect={setTab} />
+      <TabNav tabs={visibleTabs} active={activeTab} onSelect={setTab} badges={badges} />
 
       <main className="mx-auto max-w-[1200px] px-6 pb-20">
         {/* フィルタ行 */}
@@ -136,8 +168,10 @@ export default function Page() {
           </>
         ) : activeTab === "bank" ? (
           <DiglossBank />
+        ) : activeTab === "borrow-apply" ? (
+          <LoanApply account={account} onChanged={refreshUnread} />
         ) : activeTab === "finance" ? (
-          <FinanceConsole />
+          <FinanceConsole account={account} onChanged={refreshUnread} />
         ) : activeTab === "rules" ? (
           <RulesAndContracts />
         ) : activeTab === "bonus" ? (

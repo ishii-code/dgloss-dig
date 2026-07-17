@@ -131,6 +131,7 @@ enum LoanType {
 
 enum LoanStatus {
   申請中
+  差し戻し
   承認済
   却下
   完済
@@ -309,9 +310,52 @@ model Loan {
   note        String?
   createdAt   DateTime   @default(now())
 
+  messages    LoanMessage[]
+  attachments LoanAttachment[]
+  reads       LoanRead[]
+
   @@index([borrowerId])
   @@index([yearMonth])
   @@index([status])
+}
+
+/// 借入申請のチャット（コメント・差し戻し・否決・承認の履歴）
+model LoanMessage {
+  id         Int      @id @default(autoincrement())
+  loanId     Int
+  loan       Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  authorId   String // アカウントID
+  authorName String
+  kind       String   @default("comment") // apply/comment/approve/reject/return
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([loanId])
+}
+
+/// 借入申請の添付（事業計画など・銀行借入のように）
+model LoanAttachment {
+  id         Int      @id @default(autoincrement())
+  loanId     Int
+  loan       Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  fileName   String
+  category   String   @default("事業計画") // 事業計画/その他
+  note       String?
+  url        String? // 実ファイル格納は後続（現状はメタデータ）
+  uploadedBy String
+  createdAt  DateTime @default(now())
+
+  @@index([loanId])
+}
+
+/// スレッド既読管理（未読バッジ算出用）
+model LoanRead {
+  loanId     Int
+  accountId  String
+  lastReadAt DateTime @default(now())
+  loan       Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@id([loanId, accountId])
 }
 
 /// 取引記録 / メンバー間送金（要件 F-6）

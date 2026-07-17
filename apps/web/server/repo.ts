@@ -469,3 +469,164 @@ export async function updateRequestStatus(id: number, status: string, actor: str
   await audit(actor, "request.status", "FeatureRequest", String(id), { status });
   return { id, status };
 }
+
+// ─────────────────────────────────────────────
+// 借入申請・承認チャット（会社/相対・添付・差し戻し・未読）
+// ─────────────────────────────────────────────
+import type { LoanApplication, LoanDecision } from "@dig/contracts";
+import { COMPANY_LENDER, DECISION_TO_STATUS } from "@dig/contracts";
+
+/** 借入申請を作成（会社=ディグロス金融 / 相対=メンバー）。初期メッセージ＋添付を登録。 */
+export async function createLoanApplication(input: LoanApplication) {
+  const borrower = await prisma.member.findUnique({ where: { personId: input.borrowerId } });
+  if (!borrower) throw new NotFoundError("申請者(従業員)が見つかりません");
+  const lender = input.lenderKind === "会社" ? COMPANY_LENDER : input.lenderPersonId;
+  if (input.lenderKind === "相対") {
+    if (!input.lenderPersonId) throw new NotFoundError("相対の貸し手を指定してください");
+    const l = await prisma.member.findUnique({ where: { personId: input.lenderPersonId } });
+    if (!l) throw new NotFoundError("貸し手(従業員)が見つかりません");
+  }
+  const now = new Date();
+  const ym = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+
+  const loan = await prisma.loan.create({
+    data: {
+      yearMonth: ym,
+      borrowerId: input.borrowerId,
+      lender: lender!,
+      loanType: "追加",
+      status: "申請中",
+      principal: input.principal,
+      monthlyRate: 0.01,
+      termMonths: input.termMonths,
+      appliedOn: now,
+      reason: input.reason,
+      messages: {
+        create: {
+          authorId: input.applicantAccountId,
+          authorName: input.applicantName,
+          kind: "apply",
+          body: `借入申請（${input.lenderKind}）: ${input.principal.toLocaleString()}Dig / ${input.termMonths}ヶ月\n用途: ${input.reason}`,
+        },
+      },
+      attachments: {
+        create: input.attachments.map((a) => ({
+          fileName: a.fileName,
+          category: a.category,
+          note: a.note,
+          uploadedBy: input.applicantName,
+        })),
+      },
+    },
+  });
+  await audit(input.applicantAccountId, "loan.apply", "Loan", String(loan.id), {
+    lenderKind: input.lenderKind,
+    principal: input.principal,
+  });
+  return { id: loan.id };
+}
+
+export async function getLoanThread(loanId: number) {
+  const loan = await prisma.loan.findUnique({
+    where: { id: loanId },
+    include: {
+      messages: { orderBy: { createdAt: "asc" } },
+      attachments: { orderBy: { createdAt: "asc" } },
+    },
+  });
+  if (!loan) throw new NotFoundError("借入が見つかりません");
+  return loan;
+}
+
+export async function postLoanMessage(loanId: number, body: string, authorId: string, authorName: string) {
+  const loan = await prisma.loan.findUnique({ where: { id: loanId } });
+  if (!loan) throw new NotFoundError("借入が見つかりません");
+  const m = await prisma.loanMessage.create({
+    data: { loanId, authorId, authorName, kind: "comment", body },
+  });
+  return { id: m.id };
+}
+
+/** 承認/否決/差し戻し（コメント付き・チャットに記録）。 */
+export async function decideLoanApplication(loanId: number, d: LoanDecision) {
+  const loan = await prisma.loan.findUnique({ where: { id: loanId } });
+  if (!loan) throw new NotFoundError("借入が見つかりません");
+  if (loan.status !== "申請中" && loan.status !== "差し戻し")
+    throw new ConflictError("申請中/差し戻し のみ処理できます");
+
+  const status = DECISION_TO_STATUS[d.decision];
+  await prisma.loan.update({
+    where: { id: loanId },
+    data: {
+      status: status as Prisma.LoanUpdateInput["status"],
+      approvedBy: d.decision === "承認" ? d.actorAccountId : null,
+      approvedOn: d.decision === "承認" ? new Date() : null,
+    },
+  });
+  await prisma.loanMessage.create({
+    data: {
+      loanId,
+      authorId: d.actorAccountId,
+      authorName: d.actorName,
+      kind: d.decision === "承認" ? "approve" : d.decision === "否決" ? "reject" : "return",
+      body: `【${d.decision}】${d.comment ?? ""}`.trim(),
+    },
+  });
+  await audit(d.actorAccountId, `loan.${d.decision}`, "Loan", String(loanId), { status });
+  return { id: loanId, status };
+}
+
+/** 申請者が差し戻し後に再申請（申請中に戻す）。 */
+export async function resubmitLoan(loanId: number, authorId: string, authorName: string, body: string) {
+  const loan = await prisma.loan.findUnique({ where: { id: loanId } });
+  if (!loan) throw new NotFoundError("借入が見つかりません");
+  if (loan.status !== "差し戻し") throw new ConflictError("差し戻し のみ再申請できます");
+  await prisma.loan.update({ where: { id: loanId }, data: { status: "申請中" } });
+  await prisma.loanMessage.create({
+    data: { loanId, authorId, authorName, kind: "comment", body: `【再申請】${body}`.trim() },
+  });
+  return { id: loanId, status: "申請中" };
+}
+
+export async function markThreadRead(loanId: number, accountId: string) {
+  await prisma.loanRead.upsert({
+    where: { loanId_accountId: { loanId, accountId } },
+    update: { lastReadAt: new Date() },
+    create: { loanId, accountId, lastReadAt: new Date() },
+  });
+  return { loanId };
+}
+
+/** 未読数（iPhoneバッジ風）。account が関与するスレッドの未読メッセージ合計と内訳。 */
+export async function unreadCounts(accountId: string) {
+  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  if (!account) return { total: 0, perLoan: {} as Record<number, number> };
+
+  // 関与スレッド: 申請者(自分のpersonId) / 相対の貸し手 / 会社承認(SUPER_ADMIN)
+  const or: Prisma.LoanWhereInput[] = [];
+  if (account.personId) {
+    or.push({ borrowerId: account.personId });
+    or.push({ lender: account.personId });
+  }
+  if (account.role === "SUPER_ADMIN") or.push({ lender: COMPANY_LENDER });
+  if (or.length === 0) return { total: 0, perLoan: {} };
+
+  const loans = await prisma.loan.findMany({
+    where: { OR: or },
+    include: { messages: true, reads: { where: { accountId } } },
+  });
+
+  const perLoan: Record<number, number> = {};
+  let total = 0;
+  for (const loan of loans) {
+    const lastRead = loan.reads[0]?.lastReadAt ?? new Date(0);
+    const unread = loan.messages.filter(
+      (m) => m.authorId !== accountId && m.createdAt > lastRead,
+    ).length;
+    if (unread > 0) {
+      perLoan[loan.id] = unread;
+      total += unread;
+    }
+  }
+  return { total, perLoan };
+}

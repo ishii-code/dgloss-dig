@@ -63,23 +63,33 @@ export function TabNav({
   tabs,
   active,
   onSelect,
+  badges = {},
 }: {
   tabs: Tab[];
   active: string;
   onSelect: (key: string) => void;
+  badges?: Record<string, number>;
 }) {
   return (
     <nav className="border-b border-surface-border bg-white">
       <div className="mx-auto flex max-w-[1200px] gap-6 overflow-x-auto px-6">
         {tabs.map((t) => {
           const on = t.key === active;
+          const badge = badges[t.key] ?? 0;
           return (
             <button
               key={t.key}
               onClick={() => onSelect(t.key)}
               className={`relative whitespace-nowrap py-3 text-left ${on ? "text-brand-primary" : "text-ink"}`}
             >
-              <div className="text-[15px] font-bold">{t.label}</div>
+              <div className="relative inline-block text-[15px] font-bold">
+                {t.label}
+                {badge > 0 && (
+                  <span className="absolute -right-4 -top-2 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-pill bg-semantic-danger px-1 text-[11px] font-bold leading-none text-white shadow">
+                    {badge > 99 ? "99+" : badge}
+                  </span>
+                )}
+              </div>
               <div className="text-[11px] text-ink-faint">{t.sub}</div>
               {on && (
                 <span className="absolute inset-x-0 -bottom-px h-0.5 rounded bg-brand-primary" />
