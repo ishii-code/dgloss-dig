@@ -29,8 +29,10 @@ interface ContractRow {
   contractId: string;
   contractNo: string | null;
   customerName: string;
+  companyId: string | null;
   division: string;
   ruleName: string | null;
+  source: string | null; // sfa / manual
   totalDig: number;
   shares: Share[];
   perPerson: { personId: string; dig: number }[];
@@ -104,6 +106,22 @@ export function RulesAndContracts() {
       await load();
     } catch (e) {
       setMsg(`帰属更新失敗: ${(e as Error).message}`);
+    }
+  }
+
+  async function assignFromSfa() {
+    try {
+      const res = await apiSend<{ applied: number; total: number; spcrmConnected: boolean }>(
+        "/api/contracts/assign-from-sfa",
+        "POST",
+        { yearMonth: YM, actor: ACTOR },
+      );
+      setMsg(
+        `SP_CRMから担当者を自動設定: ${res.applied}/${res.total}件${res.spcrmConnected ? "（DB直結）" : "（サンプル）"}`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`自動設定失敗: ${(e as Error).message}`);
     }
   }
 
@@ -207,7 +225,10 @@ export function RulesAndContracts() {
         title="契約 → Dig反映（keiyaku-kanri-next 連携）"
         note="契約内容にルールを適用し、担当者へ折半で成果Dig付与。担当者は後から修正可。"
       />
-      <div className="mb-3 flex items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <button onClick={assignFromSfa} className="rounded-card border border-brand-primary px-4 py-1.5 text-sm font-bold text-brand-primary">
+          SP_CRMから担当者を自動設定（企業ID→担当者）
+        </button>
         <button onClick={reflect} className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white">
           この月の契約を成果Digに反映
         </button>
@@ -250,10 +271,18 @@ function ContractCard({
   return (
     <div className="rounded-card border border-surface-border bg-white p-4 shadow-card">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-ink">{row.customerName}</span>
           <span className="text-xs text-ink-faint">{row.contractNo ?? row.contractId}</span>
           <span className="rounded-pill bg-slate-100 px-2 py-0.5 text-[11px] text-ink-muted">{row.division}</span>
+          {row.companyId && (
+            <span className="rounded-pill bg-blue-50 px-2 py-0.5 text-[11px] text-brand-primary">企業ID {row.companyId}</span>
+          )}
+          {row.source && (
+            <span className={`rounded-pill px-2 py-0.5 text-[11px] font-bold ${row.source === "sfa" ? "bg-emerald-100 text-semantic-success" : "bg-violet-100 text-brand-accent"}`}>
+              {row.source === "sfa" ? "SFA自動" : "手動修正"}
+            </span>
+          )}
         </div>
         <div className="tabular text-sm">
           ルール: <span className="text-ink-muted">{row.ruleName ?? "未設定"}</span>　付与:

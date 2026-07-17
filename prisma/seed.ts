@@ -50,6 +50,7 @@ async function main() {
   await prisma.loan.deleteMany();
   await prisma.bonusDigRecord.deleteMany();
   await prisma.transaction.deleteMany();
+  await prisma.featureRequest.deleteMany();
 
   // 設定
   await prisma.setting.upsert({
@@ -210,27 +211,29 @@ async function main() {
 
   // 契約（keiyaku 取込サンプル）＋ 帰属（SFA担当者から初期化・折半対応）
   const contracts = [
-    { id: "K-1001", contractNo: "C2607-001", customerName: "サンプル商事", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 300000, setupFee: 100000, initialFee: 500000, termMonths: 12, startDate: "2026-01-10", lineItems: [{ key: "line", qty: 3, unit: 50000 }, { key: "call", qty: 2, unit: 50000 }], yearMonth: YM, shares: [{ personId: "B0000098", sharePercent: 50 }, { personId: "B0000097", sharePercent: 50 }] },
-    { id: "K-1002", contractNo: "C2607-002", customerName: "テスト工業", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 200000, setupFee: 0, initialFee: 300000, termMonths: 6, startDate: "2026-01-15", lineItems: [{ key: "line", qty: 2, unit: 50000 }], yearMonth: YM, shares: [{ personId: "B0000064", sharePercent: 100 }] },
-    { id: "K-2001", contractNo: "C2607-010", customerName: "CRM顧客A", division: "CRM事業部", modelKey: "account", status: "active", baseAmount: 800000, setupFee: 0, initialFee: 0, termMonths: 12, startDate: "2026-01-05", lineItems: [], yearMonth: YM, shares: [{ personId: "B0000085", sharePercent: 100 }] },
+    { id: "K-1001", contractNo: "C2607-001", customerName: "サンプル商事", companyId: "SP-ACC-1001", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 300000, setupFee: 100000, initialFee: 500000, termMonths: 12, startDate: "2026-01-10", lineItems: [{ key: "line", qty: 3, unit: 50000 }, { key: "call", qty: 2, unit: 50000 }], yearMonth: YM },
+    { id: "K-1002", contractNo: "C2607-002", customerName: "テスト工業", companyId: "SP-ACC-1002", division: "AIテレアポ事業部", modelKey: "line_call", status: "active", baseAmount: 200000, setupFee: 0, initialFee: 300000, termMonths: 6, startDate: "2026-01-15", lineItems: [{ key: "line", qty: 2, unit: 50000 }], yearMonth: YM },
+    { id: "K-2001", contractNo: "C2607-010", customerName: "CRM顧客A", companyId: "SP-ACC-2001", division: "CRM事業部", modelKey: "account", status: "active", baseAmount: 800000, setupFee: 0, initialFee: 0, termMonths: 12, startDate: "2026-01-05", lineItems: [], yearMonth: YM },
   ];
   for (const c of contracts) {
-    const { shares, ...contract } = c;
     await prisma.contract.upsert({
       where: { id: c.id },
       update: {},
       create: {
-        ...contract,
+        ...c,
         startDate: new Date(`${c.startDate}T00:00:00Z`),
         lineItems: c.lineItems,
       },
     });
-    await prisma.contractAssignment.upsert({
-      where: { contractId: c.id },
-      update: {},
-      create: { contractId: c.id, source: "sfa", shares },
-    });
   }
+
+  // 改善リクエスト（サンプル）
+  await prisma.featureRequest.createMany({
+    data: [
+      { title: "ボーナスDig記録をCSVで一括登録したい", body: "月末にまとめて入力するため", category: "機能改善", status: "未対応", page: "bonus", createdBy: "掛端光" },
+      { title: "達成率グラフの推移表示", body: "月次の推移を折れ線で見たい", category: "機能改善", status: "対応中", page: "monitor", createdBy: "土屋知己" },
+    ],
+  });
 
   // アカウント（RBAC）
   const accounts = [
@@ -238,6 +241,8 @@ async function main() {
     { id: "eguchi@dgloss.co.jp", email: "eguchi@dgloss.co.jp", name: "江口智隆", role: "SUPER_ADMIN" as const, personId: "B0000071", active: true },
     { id: "kakehata@dgloss.co.jp", email: "kakehata@dgloss.co.jp", name: "掛端光", role: "ADMIN" as const, personId: "B0000064", active: true },
     { id: "tsuchiya@dgloss.co.jp", email: "tsuchiya@dgloss.co.jp", name: "土屋知己", role: "ADMIN" as const, personId: "B0000068", active: true },
+    { id: "kondo@dgloss.co.jp", email: "kondo@dgloss.co.jp", name: "近藤浩人", role: "USER" as const, personId: "B0000098", active: true },
+    { id: "honma@dgloss.co.jp", email: "honma@dgloss.co.jp", name: "本間駿", role: "USER" as const, personId: "B0000085", active: true },
     { id: "horikawa@dgloss.co.jp", email: "horikawa@dgloss.co.jp", name: "堀川璃歩", role: "USER" as const, personId: "B0000097", active: true },
     { id: "aoki@dgloss.co.jp", email: "aoki@dgloss.co.jp", name: "青木未来", role: "USER" as const, personId: "B0000087", active: true },
   ];

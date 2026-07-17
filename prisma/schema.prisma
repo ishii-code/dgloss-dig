@@ -32,6 +32,7 @@ model Contract {
   id           String              @id // keiyaku contract id
   contractNo   String?
   customerName String
+  companyId    String? // 企業ID（SP_CRM 取引先参照・担当者自動帰属に使用）
   division     String
   modelKey     String
   status       String
@@ -56,6 +57,21 @@ model ContractAssignment {
   source     String // sfa / manual
   shares     Json // AssignmentShare[] {personId, sharePercent}
   updatedAt  DateTime @updatedAt
+}
+
+/// 改善リクエスト（機能改善の投稿・対応管理）
+model FeatureRequest {
+  id        Int      @id @default(autoincrement())
+  title     String
+  body      String?
+  category  String   @default("機能改善")
+  status    String   @default("未対応")
+  page      String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
 
 /// 監査ログ（設定変更・借入承認・送金・金利変更等の操作記録・要件 §10）

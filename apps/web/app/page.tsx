@@ -16,6 +16,7 @@ import { AccountsAdmin } from "@/components/accounts";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
 import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
+import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
 import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
@@ -30,6 +31,7 @@ const TABS: Tab[] = [
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "master", label: "従業員マスタ", sub: "編集" },
   { key: "accounts", label: "アカウント管理", sub: "権限" },
+  { key: "requests", label: "改善リクエスト", sub: "投稿・対応" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
   { key: "settings", label: "設定", sub: "マスタ" },
 ];
@@ -146,6 +148,8 @@ export default function Page() {
           <MemberMaster />
         ) : activeTab === "accounts" ? (
           <AccountsAdmin />
+        ) : activeTab === "requests" ? (
+          <FeatureRequests />
         ) : activeTab === "release" ? (
           <ReleaseNotes />
         ) : (

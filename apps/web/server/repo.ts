@@ -208,7 +208,7 @@ function pickRule(rules: CalcRule[], division: string, modelKey: string): CalcRu
 }
 
 function toContract(row: {
-  id: string; contractNo: string | null; customerName: string; division: string; modelKey: string;
+  id: string; contractNo: string | null; customerName: string; companyId: string | null; division: string; modelKey: string;
   status: string; baseAmount: Prisma.Decimal; setupFee: Prisma.Decimal; initialFee: Prisma.Decimal;
   termMonths: number; startDate: Date | null; lineItems: Prisma.JsonValue;
 }): Contract {
@@ -216,6 +216,7 @@ function toContract(row: {
     id: row.id,
     contractNo: row.contractNo,
     customerName: row.customerName,
+    companyId: row.companyId,
     division: row.division,
     modelKey: row.modelKey,
     status: row.status,
@@ -256,8 +257,10 @@ export async function previewContractDig(yearMonth: string) {
       contractId: contract.id,
       contractNo: contract.contractNo,
       customerName: contract.customerName,
+      companyId: contract.companyId,
       division: contract.division,
       ruleName: rule?.name ?? null,
+      source: row.assignment?.source ?? null,
       totalDig,
       shares,
       perPerson,
@@ -405,4 +408,61 @@ export async function deleteAccount(id: string, actor: string) {
   await prisma.account.delete({ where: { id } });
   await audit(actor, "account.delete", "Account", id, {});
   return { id };
+}
+
+// ─────────────────────────────────────────────
+// SP_CRM 連携（企業ID→担当者→自動帰属）
+// ─────────────────────────────────────────────
+import { resolveAssigneesByCompany, spcrmConnected } from "./spcrm";
+
+/** SP_CRM の担当者から契約の帰属(source=sfa)を自動生成（既存 manual は上書きしない）。 */
+export async function assignFromSfa(yearMonth: string, actor: string) {
+  const contracts = await prisma.contract.findMany({
+    where: { yearMonth },
+    include: { assignment: true },
+  });
+  const results: { contractId: string; applied: boolean; note: string }[] = [];
+  for (const c of contracts) {
+    if (c.assignment?.source === "manual") {
+      results.push({ contractId: c.id, applied: false, note: "手動設定のためスキップ" });
+      continue;
+    }
+    const { shares, note } = await resolveAssigneesByCompany(c.companyId);
+    if (!shares.length) {
+      results.push({ contractId: c.id, applied: false, note });
+      continue;
+    }
+    await prisma.contractAssignment.upsert({
+      where: { contractId: c.id },
+      update: { source: "sfa", shares: shares as unknown as Prisma.InputJsonValue },
+      create: { contractId: c.id, source: "sfa", shares: shares as unknown as Prisma.InputJsonValue },
+    });
+    results.push({ contractId: c.id, applied: true, note });
+  }
+  const applied = results.filter((r) => r.applied).length;
+  await audit(actor, "assignment.from_sfa", "ContractAssignment", yearMonth, { applied, spcrmConnected });
+  return { yearMonth, applied, total: contracts.length, spcrmConnected, results };
+}
+
+// ─────────────────────────────────────────────
+// 改善リクエスト
+// ─────────────────────────────────────────────
+export const listFeatureRequests = () =>
+  prisma.featureRequest.findMany({ orderBy: [{ status: "asc" }, { createdAt: "desc" }] });
+
+export async function createFeatureRequest(input: {
+  title: string; body: string | null; category: string; page: string | null; createdBy: string;
+}) {
+  const r = await prisma.featureRequest.create({
+    data: { title: input.title, body: input.body, category: input.category, page: input.page, createdBy: input.createdBy, status: "未対応" },
+  });
+  return { id: r.id };
+}
+
+export async function updateRequestStatus(id: number, status: string, actor: string) {
+  const r = await prisma.featureRequest.findUnique({ where: { id } });
+  if (!r) throw new NotFoundError("request not found");
+  await prisma.featureRequest.update({ where: { id }, data: { status } });
+  await audit(actor, "request.status", "FeatureRequest", String(id), { status });
+  return { id, status };
 }
