@@ -225,6 +225,7 @@ describe("Dig獲得ルール（F-3・keiyaku連携）", () => {
     id: "K-1",
     contractNo: "C-001",
     customerName: "テスト社",
+    companyId: "SP-ACC-1",
     division: "AIテレアポ事業部",
     modelKey: "line_call",
     status: "active",

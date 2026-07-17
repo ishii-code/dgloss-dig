@@ -316,6 +316,8 @@ export const ContractSchema = z.object({
   id: z.string().min(1),
   contractNo: z.string().nullable(),
   customerName: z.string(),
+  /** 企業ID（SP_CRM の取引先=法人番号 等を参照。担当者の自動帰属に使用） */
+  companyId: z.string().nullable(),
   division: z.string(), // 事業部（Dig帰属先の判定に使用）
   modelKey: z.string(), // 課金形態
   status: z.string(), // active / applying / paused / canceled / expiring
@@ -409,3 +411,22 @@ export function canAccessTab(role: Role, tabKey: string): boolean {
   const need = TAB_MIN_LEVEL[tabKey] ?? 0;
   return ROLE_LEVEL[role] >= need;
 }
+
+// ─────────────────────────────────────────────
+// 改善リクエスト（機能改善の投稿・対応管理）
+// ─────────────────────────────────────────────
+export const RequestCategory = z.enum(["機能改善", "不具合", "その他"]);
+export type RequestCategory = z.infer<typeof RequestCategory>;
+
+export const RequestStatus = z.enum(["未対応", "対応中", "完了"]);
+export type RequestStatus = z.infer<typeof RequestStatus>;
+
+export const FeatureRequestSchema = z.object({
+  title: z.string().min(1).max(120),
+  body: z.string().max(2000).nullable(),
+  category: RequestCategory,
+  /** 投稿画面（どのタブからの要望か） */
+  page: z.string().max(64).nullable(),
+  createdBy: z.string().min(1).max(64), // アカウントID/氏名
+});
+export type FeatureRequestInput = z.infer<typeof FeatureRequestSchema>;
