@@ -259,8 +259,29 @@ model MonthlyEvaluation {
   finalized Boolean  @default(false)
   createdAt DateTime @default(now())
 
+  // Q3: 超過分の処理選択（incentive=インセン / carryover=翌期持越）
+  surplusChoice   String  @default("incentive")
+  // Q13: 成果Dig手入力の承認（自動計上=承認済 / 手入力=要承認）
+  seikaApproved   Boolean @default(true)
+  seikaInputBy    String?
+  seikaApprovedBy String?
+
   @@id([yearMonth, personId])
   @@index([yearMonth])
+}
+
+/// 退社時の借入残高精算（Q14・グループ負担割合・相殺）
+model RetirementSettlement {
+  id          Int      @id @default(autoincrement())
+  personId    String
+  yearMonth   String
+  loanBalance Decimal  @db.Decimal(14, 2)
+  shares      Json // [{personId, amount}] グループ内の負担配分
+  note        String?
+  settledBy   String
+  createdAt   DateTime @default(now())
+
+  @@index([personId])
 }
 
 /// ボーナスDig項目マスタ（要件 F-4）

@@ -17,6 +17,7 @@ import type { CurrentAccount } from "@/components/loan-thread";
 import { LoanApply } from "@/components/loans-apply";
 import { MemberMaster } from "@/components/masters";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
+import { PeriodClose } from "@/components/period-close";
 import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
 import { SalaryTable } from "@/components/salary-table";
@@ -35,6 +36,7 @@ const TABS: Tab[] = [
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "master", label: "従業員マスタ", sub: "編集" },
+  { key: "period-close", label: "期末処理", sub: "確定・承認・精算" },
   { key: "salary", label: "給与テーブル", sub: "全社統一" },
   { key: "accounts", label: "アカウント管理", sub: "権限" },
   { key: "requests", label: "改善リクエスト", sub: "投稿・対応" },
@@ -182,6 +184,8 @@ export default function Page() {
           <TransactionLog />
         ) : activeTab === "master" ? (
           <MemberMaster />
+        ) : activeTab === "period-close" ? (
+          <PeriodClose account={account} />
         ) : activeTab === "salary" ? (
           <SalaryTable />
         ) : activeTab === "accounts" ? (

@@ -485,6 +485,7 @@ export const TAB_MIN_LEVEL: Record<string, number> = {
   release: 0,
   rules: 1, // ADMIN 以上
   settings: 1, // ADMIN 以上
+  "period-close": 1, // ADMIN 以上（承認はスーパーADMIN）
   finance: 2, // SUPER_ADMIN のみ（ディグロス金融 承認）
   master: 2, // SUPER_ADMIN のみ（従業員マスタ）
   accounts: 2, // SUPER_ADMIN のみ（アカウント管理）

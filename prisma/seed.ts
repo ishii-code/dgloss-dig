@@ -250,6 +250,32 @@ async function main() {
     await prisma.account.upsert({ where: { id: a.id }, update: a, create: a });
   }
 
+  // Q14: 退社者（借入残高あり）
+  await prisma.member.upsert({
+    where: { personId: "D9999" },
+    update: { status: "退社" },
+    create: {
+      personId: "D9999", name: "退職花子", division: "SP事業部", position: "メンバー",
+      jobType: "IS", employmentType: "アルバイト", basePay: 200000, positionBase: 183000,
+      joinedOn: new Date("2025-06-01T00:00:00Z"), leftOn: new Date("2026-01-31T00:00:00Z"),
+      evaluationCycle: "四半期", status: "退社",
+    },
+  });
+  await prisma.loan.create({
+    data: {
+      yearMonth: YM, borrowerId: "D9999", lender: "ディグロス金融", loanType: "初回",
+      status: "承認済", principal: 500000, monthlyRate: 0.01, termMonths: 12,
+      appliedOn: new Date("2025-06-01T00:00:00Z"), approvedBy: "ディグロス金融", approvedOn: new Date("2025-06-01T00:00:00Z"),
+      note: "退社時 借入残高（精算対象）",
+    },
+  });
+
+  // Q13: 手入力の成果Dig（未承認）を1件（堀川）
+  await prisma.monthlyEvaluation.update({
+    where: { yearMonth_personId: { yearMonth: YM, personId: "B0000097" } },
+    data: { seikaApproved: false, seikaInputBy: "土屋知己（マネージャー手入力）" },
+  });
+
   const counts = {
     members: await prisma.member.count(),
     accounts: await prisma.account.count(),
