@@ -427,7 +427,10 @@ export async function assignFromSfa(yearMonth: string, actor: string) {
       results.push({ contractId: c.id, applied: false, note: "手動設定のためスキップ" });
       continue;
     }
-    const { shares, note } = await resolveAssigneesByCompany(c.companyId);
+    const { shares, note } = await resolveAssigneesByCompany({
+      companyId: c.companyId,
+      companyName: c.customerName, // ID整理までは企業名でマッチング（暫定）
+    });
     if (!shares.length) {
       results.push({ contractId: c.id, applied: false, note });
       continue;
