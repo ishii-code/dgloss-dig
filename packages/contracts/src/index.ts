@@ -203,15 +203,62 @@ export const LoanSchema = z.object({
 });
 export type Loan = z.infer<typeof LoanSchema>;
 
-/** 追加借入の申請（ディグロス金融が承認/却下する対象・要件 F-5） */
+/** 借入の貸出先: 会社(ディグロス金融) or 相対(メンバー間) */
+export const LenderKind = z.enum(["会社", "相対"]);
+export type LenderKind = z.infer<typeof LenderKind>;
+
+/** 添付（事業計画など・銀行借入のように） */
+export const LoanAttachmentInput = z.object({
+  fileName: z.string().min(1).max(200),
+  category: z.enum(["事業計画", "その他"]).default("事業計画"),
+  note: z.string().max(500).nullable().default(null),
+});
+export type LoanAttachmentInput = z.infer<typeof LoanAttachmentInput>;
+
+/**
+ * 借入申請（会社=ディグロスバンク / 相対=メンバー間）。申請承認ベース。
+ * 会社借入は SUPER_ADMIN(金融) が、相対借入は counterparty(貸し手) が承認する。
+ */
 export const LoanApplicationSchema = z.object({
-  borrowerId: z.string().min(1).max(32),
-  requestedPrincipal: z.number().positive(),
+  borrowerId: z.string().min(1).max(32), // 申請者(Person ID)
+  lenderKind: LenderKind,
+  /** 相対の場合の貸し手 Person ID（会社の場合は null） */
+  lenderPersonId: z.string().max(32).nullable(),
+  principal: z.number().positive(),
   termMonths: z.number().int().positive(),
-  reason: z.string().min(1).max(256),
-  appliedOn: z.string().date(),
+  reason: z.string().min(1).max(1000), // 用途・事業計画の概要
+  attachments: z.array(LoanAttachmentInput).default([]),
+  applicantAccountId: z.string().min(1).max(64), // 申請者アカウント
+  applicantName: z.string().min(1).max(64),
 });
 export type LoanApplication = z.infer<typeof LoanApplicationSchema>;
+
+/** 承認者の判定: 承認/否決/差し戻し（＋コメント） */
+export const LoanDecisionKind = z.enum(["承認", "否決", "差し戻し"]);
+export type LoanDecisionKind = z.infer<typeof LoanDecisionKind>;
+
+export const LoanDecisionSchema = z.object({
+  decision: LoanDecisionKind,
+  comment: z.string().max(1000).nullable().default(null),
+  actorAccountId: z.string().min(1).max(64),
+  actorName: z.string().min(1).max(64),
+});
+export type LoanDecision = z.infer<typeof LoanDecisionSchema>;
+
+/** チャットのコメント投稿 */
+export const LoanMessageInput = z.object({
+  body: z.string().min(1).max(1000),
+  authorAccountId: z.string().min(1).max(64),
+  authorName: z.string().min(1).max(64),
+});
+export type LoanMessageInput = z.infer<typeof LoanMessageInput>;
+
+/** 決定種別 → ステータス */
+export const DECISION_TO_STATUS: Record<LoanDecisionKind, string> = {
+  承認: "承認済",
+  否決: "却下",
+  差し戻し: "差し戻し",
+};
 
 export interface LoanScheduleRow {
   /** 借入残高（月初） */

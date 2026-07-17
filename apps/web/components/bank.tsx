@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { COMPANY_LENDER } from "@dig/contracts";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { man, loanStatusStyle, loanTypeStyle, pct } from "@/lib/format";
 import { ALL_LOANS, type LoanView, scheduleOf } from "@/lib/loans";
+import { type CurrentAccount, LoanThread } from "./loan-thread";
 import { SectionHeader } from "./ui";
 
 function Badge({ text, cls }: { text: string; cls: string }) {
@@ -114,104 +116,62 @@ function Field({ label, value, strong }: { label: string; value: string; strong?
   );
 }
 
-// ── ディグロス金融 管理画面（承認コンソール・API接続） ──
-interface AppRow {
+
+// ── ディグロス金融 管理画面（承認コンソール・チャット/差し戻し/添付対応） ──
+const DEFAULT_ANNUAL = 12;
+
+interface FinLoan {
   id: number;
-  borrowerName: string;
-  loanType: string;
+  borrowerId: string;
+  lender: string;
   status: string;
   principal: number;
   termMonths: number;
-  reason: string | null;
-  appliedOn: string;
 }
 
-const DEFAULT_ANNUAL = 12;
-const ACTOR = "B0000071"; // ログイン中の金融承認者（暫定）
-
-export function FinanceConsole() {
-  const [rows, setRows] = useState<AppRow[]>([]);
+export function FinanceConsole({ account, onChanged }: { account: CurrentAccount; onChanged?: () => void }) {
+  const [loans, setLoans] = useState<FinLoan[]>([]);
+  const [members, setMembers] = useState<{ personId: string; name: string }[]>([]);
   const [rate, setRate] = useState(DEFAULT_ANNUAL);
   const [savedRate, setSavedRate] = useState(DEFAULT_ANNUAL);
+  const [unread, setUnread] = useState<Record<number, number>>({});
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
-  const [busy, setBusy] = useState<number | null>(null);
+  const [open, setOpen] = useState<number | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const [loans, members, setting] = await Promise.all([
-          apiGet<{ id: number; borrowerId: string; loanType: string; status: string; principal: number; termMonths: number; reason: string | null; appliedOn: string }[]>("/api/loans"),
-          apiGet<{ personId: string; name: string }[]>("/api/members"),
-          apiGet<{ annualRatePct: number }>("/api/settings?ym=2026-01"),
-        ]);
-        if (!alive) return;
-        const nameOf = (id: string) => members.find((m) => m.personId === id)?.name ?? id;
-        setRows(
-          loans
-            .filter((l) => l.loanType === "追加")
-            .map((l) => ({
-              id: l.id,
-              borrowerName: nameOf(l.borrowerId),
-              loanType: l.loanType,
-              status: l.status,
-              principal: l.principal,
-              termMonths: l.termMonths,
-              reason: l.reason,
-              appliedOn: l.appliedOn.slice(0, 10),
-            })),
-        );
-        setRate(setting.annualRatePct);
-        setSavedRate(setting.annualRatePct);
-        setSource("db");
-      } catch {
-        if (!alive) return;
-        // フォールバック: モックデータ
-        setRows(
-          ALL_LOANS.filter((l) => l.loanType === "追加").map((l, i) => ({
-            id: i + 1,
-            borrowerName: l.borrowerName,
-            loanType: l.loanType,
-            status: l.status,
-            principal: l.principal,
-            termMonths: l.termMonths,
-            reason: l.reason ?? null,
-            appliedOn: l.appliedOn,
-          })),
-        );
-        setSource("mock");
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const pending = rows.filter((r) => r.status === "申請中").length;
-
-  async function decide(id: number, approve: boolean) {
-    setBusy(id);
-    const next = approve ? "承認済" : "却下";
-    if (source === "db") {
-      try {
-        await apiSend(`/api/loans/${id}/decision`, "POST", { approve, actor: ACTOR });
-      } catch {
-        setBusy(null);
-        return;
-      }
+  const load = useCallback(async () => {
+    try {
+      const [l, m, setting, u] = await Promise.all([
+        apiGet<FinLoan[]>("/api/loans"),
+        apiGet<{ personId: string; name: string }[]>("/api/members"),
+        apiGet<{ annualRatePct: number }>("/api/settings?ym=2026-01"),
+        apiGet<{ perLoan: Record<number, number> }>(`/api/loans/unread?accountId=${account.id}`),
+      ]);
+      setLoans(l);
+      setMembers(m);
+      setRate(setting.annualRatePct);
+      setSavedRate(setting.annualRatePct);
+      setUnread(u.perLoan);
+      setSource("db");
+    } catch {
+      setSource("mock");
     }
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, status: next } : r)));
-    setBusy(null);
-  }
+  }, [account.id]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const refresh = () => {
+    void load();
+    onChanged?.();
+  };
+  const nameOf = (id: string) => members.find((m) => m.personId === id)?.name ?? id;
+  const queue = loans.filter((l) => l.lender === COMPANY_LENDER && (l.status === "申請中" || l.status === "差し戻し"));
+  const decided = loans.filter((l) => l.lender === COMPANY_LENDER && (l.status === "承認済" || l.status === "却下"));
 
   async function saveRate() {
     if (source === "db") {
       try {
-        await apiSend("/api/settings/rate", "PATCH", {
-          yearMonth: "2026-01",
-          annualRatePct: rate,
-          actor: ACTOR,
-        });
+        await apiSend("/api/settings/rate", "PATCH", { yearMonth: "2026-01", annualRatePct: rate, actor: account.id });
       } catch {
         return;
       }
@@ -223,20 +183,11 @@ export function FinanceConsole() {
     <>
       <SectionHeader
         title="ディグロス金融 管理画面"
-        note="追加借入の承認・却下と金利設定（AIはL4まで・最終判断は人）"
+        note="会社借入の承認・否決・差し戻し（チャットで過不足を確認）と金利設定"
         accent="accent"
       />
-
       <div className="mb-4">
-        <span
-          className={`rounded-pill px-2 py-0.5 text-xs font-bold ${
-            source === "db"
-              ? "bg-emerald-100 text-semantic-success"
-              : source === "mock"
-                ? "bg-amber-100 text-semantic-warn"
-                : "bg-slate-100 text-ink-muted"
-          }`}
-        >
+        <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${source === "db" ? "bg-emerald-100 text-semantic-success" : source === "mock" ? "bg-amber-100 text-semantic-warn" : "bg-slate-100 text-ink-muted"}`}>
           {source === "db" ? "● DB接続（承認・金利は永続化）" : source === "mock" ? "○ モック表示（DB未接続）" : "接続中…"}
         </span>
       </div>
@@ -249,93 +200,44 @@ export function FinanceConsole() {
             <div className="tabular text-2xl font-bold text-ink">{rate.toFixed(1)}%</div>
           </div>
           <div className="text-xs text-ink-muted">
-            月利 {(rate / 12).toFixed(3)}%（新規借入に適用・既存借入は借入時レートを保持）
+            月利 {(rate / 12).toFixed(3)}%（新規借入に適用・既存は借入時レート保持）
             {rate !== savedRate && <span className="ml-2 text-semantic-warn">未保存</span>}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <input
-              type="range"
-              min={0}
-              max={24}
-              step={0.5}
-              value={rate}
-              onChange={(e) => setRate(Number(e.target.value))}
-              className="accent-brand-primary"
-            />
-            <button
-              onClick={saveRate}
-              disabled={rate === savedRate}
-              className="rounded-card bg-brand-primary px-3 py-1 text-xs font-bold text-white disabled:opacity-40"
-            >
-              保存
-            </button>
+            <input type="range" min={0} max={24} step={0.5} value={rate} onChange={(e) => setRate(Number(e.target.value))} className="accent-brand-primary" />
+            <button onClick={saveRate} disabled={rate === savedRate} className="rounded-card bg-brand-primary px-3 py-1 text-xs font-bold text-white disabled:opacity-40">保存</button>
           </div>
         </div>
       </div>
 
-      {/* 承認キュー */}
+      {/* 承認キュー（チャット付き） */}
       <div className="mb-2 flex items-center gap-2 text-sm">
-        <span className="font-semibold text-ink">承認待ちキュー</span>
-        <span className="rounded-pill bg-amber-100 px-2 py-0.5 text-xs font-bold text-semantic-warn">
-          {pending}件
-        </span>
+        <span className="font-semibold text-ink">承認待ち・差し戻し</span>
+        <span className="rounded-pill bg-amber-100 px-2 py-0.5 text-xs font-bold text-semantic-warn">{queue.length}件</span>
       </div>
-      <div className="overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
-              <th className="px-4 py-2.5 font-semibold">借入者</th>
-              <th className="px-4 py-2.5 font-semibold">種別</th>
-              <th className="px-4 py-2.5 text-right font-semibold">申請額</th>
-              <th className="px-4 py-2.5 text-right font-semibold">期間</th>
-              <th className="px-4 py-2.5 font-semibold">理由</th>
-              <th className="px-4 py-2.5 font-semibold">申請日</th>
-              <th className="px-4 py-2.5 text-center font-semibold">判定</th>
-            </tr>
-          </thead>
-          <tbody className="tabular">
-            {rows.map((l) => (
-              <tr key={l.id} className="border-b border-surface-border last:border-0">
-                <td className="px-4 py-2.5 font-medium text-ink">{l.borrowerName}</td>
-                <td className="px-4 py-2.5">
-                  <Badge text={l.loanType} cls={loanTypeStyle(l.loanType)} />
-                </td>
-                <td className="px-4 py-2.5 text-right">{man(l.principal)}</td>
-                <td className="px-4 py-2.5 text-right text-ink-muted">{l.termMonths}ヶ月</td>
-                <td className="px-4 py-2.5 text-ink-muted">{l.reason ?? "—"}</td>
-                <td className="px-4 py-2.5 text-ink-muted">{l.appliedOn}</td>
-                <td className="px-4 py-2.5">
-                  {l.status === "申請中" ? (
-                    <div className="flex justify-center gap-2">
-                      <button
-                        onClick={() => decide(l.id, true)}
-                        disabled={busy === l.id}
-                        className="rounded-card bg-brand-primary px-3 py-1 text-xs font-bold text-white disabled:opacity-40"
-                      >
-                        承認
-                      </button>
-                      <button
-                        onClick={() => decide(l.id, false)}
-                        disabled={busy === l.id}
-                        className="rounded-card border border-semantic-danger px-3 py-1 text-xs font-bold text-semantic-danger disabled:opacity-40"
-                      >
-                        却下
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-center">
-                      <Badge text={l.status} cls={loanStatusStyle(l.status)} />
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="px-4 py-2 text-[11px] text-ink-faint">
-          ※ 初回借入（入社時）は自動承認のためキューに出ません。操作は監査ログに記録されます。
-        </div>
+      <div className="space-y-2">
+        {queue.length === 0 && <div className="rounded-card border border-dashed border-surface-border p-4 text-center text-xs text-ink-faint">承認待ちはありません</div>}
+        {queue.map((l) => (
+          <div key={l.id}>
+            <button onClick={() => setOpen(open === l.id ? null : l.id)} className="flex w-full items-center gap-2 rounded-card border border-surface-border bg-white px-4 py-2.5 text-left text-sm shadow-card">
+              <span className="font-medium text-ink">借入 #{l.id}</span>
+              <span className="text-ink-muted">{nameOf(l.borrowerId)}</span>
+              <span className={`rounded-pill px-2 py-0.5 text-[11px] font-bold ${l.status === "差し戻し" ? "bg-orange-100 text-semantic-warn" : "bg-amber-100 text-semantic-warn"}`}>{l.status}</span>
+              <span className="tabular text-ink-muted">{man(l.principal)}</span>
+              <span className="ml-auto flex items-center gap-2">
+                {unread[l.id] ? <span className="inline-flex min-w-[18px] items-center justify-center rounded-pill bg-semantic-danger px-1.5 text-[11px] font-bold text-white">{unread[l.id]}</span> : null}
+                <span className="text-xs text-brand-primary">{open === l.id ? "閉じる" : "開く"}</span>
+              </span>
+            </button>
+            {open === l.id && <div className="mt-2"><LoanThread loanId={l.id} account={account} onChanged={refresh} /></div>}
+          </div>
+        ))}
       </div>
+
+      {decided.length > 0 && (
+        <div className="mt-6 text-xs text-ink-faint">処理済み: {decided.length}件（承認 {decided.filter((l) => l.status === "承認済").length} / 却下 {decided.filter((l) => l.status === "却下").length}）</div>
+      )}
+      <div className="mt-4 text-[11px] text-ink-faint">※ 初回借入（入社時）は自動承認のためキューに出ません。操作は監査ログに記録されます。</div>
     </>
   );
 }
