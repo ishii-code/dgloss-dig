@@ -21,6 +21,22 @@ export function rateColor(rate: number): string {
   return "text-semantic-danger";
 }
 
+/** 昇降級ラベル（段数 +2/+1/0/-1/-2）。 */
+export function promotionLabel(step: number): string {
+  if (step === 2) return "▲▲ 2段昇級";
+  if (step === 1) return "▲ 1段昇級";
+  if (step === -1) return "▼ 1段降級";
+  if (step === -2) return "▼▼ 2段降級";
+  return "— 据置";
+}
+
+/** 昇降級の配色。 */
+export function promotionStyle(step: number): string {
+  if (step > 0) return "bg-emerald-100 text-semantic-success";
+  if (step < 0) return "bg-rose-100 text-semantic-danger";
+  return "bg-slate-100 text-ink-muted";
+}
+
 /** 借入ステータスのバッジ配色。 */
 export function loanStatusStyle(status: string): string {
   switch (status) {
