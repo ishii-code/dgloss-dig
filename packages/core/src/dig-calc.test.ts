@@ -3,9 +3,15 @@ import { DEFAULT_SETTING } from "@dig/contracts";
 import {
   achievementRate,
   aggregateSeikaDig,
+  blendedIncentive,
   buildInitialLoan,
+  clawback,
   computeContractDig,
   computeQuarterBalance,
+  cumulativeBudgetElapsed,
+  cumulativeMonths,
+  demotionOnNegative,
+  evaluationRateWithBehavior,
   cumulativeBudgetDig,
   daysInMonth,
   evaluateMonthly,
@@ -14,6 +20,7 @@ import {
   monthlyBudgetDig,
   monthlyRateFromAnnual,
   mround,
+  monthDiff,
   promotionRate,
   promotionStep,
   promotionStepDual,
@@ -22,7 +29,9 @@ import {
   salaryGradeMove,
   seatCost,
   splitDig,
+  surplusAllocation,
   totalCost,
+  zeroSumTransfer,
 } from "./dig-calc.js";
 
 const S = DEFAULT_SETTING;
@@ -321,6 +330,65 @@ describe("2系統昇降級（Q1案1・借入は昇級に効かせない）", () 
   });
   it("promotionRate: (成果+ボーナス)/予算", () => {
     expect(promotionRate(400000, 100000, 1000000)).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("期途中入社の累計（Q7・入社月除外・翌月〜）", () => {
+  it("1月入社・3月評価 → 2ヶ月（2月,3月）", () => {
+    expect(cumulativeMonths("2026-01", "2026-03", 3)).toBe(2);
+  });
+  it("長期在籍は四半期=3で頭打ち", () => {
+    expect(cumulativeMonths("2024-08", "2026-03", 3)).toBe(3);
+  });
+  it("入社月と同月は0", () => {
+    expect(cumulativeMonths("2026-03", "2026-03", 3)).toBe(0);
+  });
+  it("累計予算= 単月×月数", () => {
+    expect(cumulativeBudgetElapsed(4300000, 2)).toBe(8600000);
+  });
+});
+
+describe("管理職インセンのブレンド（Q9）", () => {
+  it("個人70%/グループ30%", () => {
+    expect(blendedIncentive(100000, 200000, 0.7)).toBeCloseTo(130000, 6);
+  });
+});
+
+describe("クローバック（Q11・期間比例）", () => {
+  it("12ヶ月契約を3ヶ月で解約 → 残9ヶ月分巻き戻し", () => {
+    expect(clawback(1200000, 12, 3)).toBe(900000);
+  });
+  it("満了は巻き戻しなし", () => {
+    expect(clawback(1200000, 12, 12)).toBe(0);
+  });
+});
+
+describe("超過分の持ち越し/インセン選択（Q3）", () => {
+  it("incentive選択 → 超過×20%", () => {
+    expect(surplusAllocation(1000000, "incentive")).toEqual({ incentive: 200000, carryover: 0 });
+  });
+  it("carryover選択 → 全額繰越・インセン0", () => {
+    expect(surplusAllocation(1000000, "carryover")).toEqual({ incentive: 0, carryover: 1000000 });
+  });
+  it("マイナス着地は減給（-2段）", () => {
+    expect(demotionOnNegative(-50000, S)).toBe(-2);
+    expect(demotionOnNegative(10000, S)).toBe(0);
+  });
+});
+
+describe("安全弁（Q15・行動指標を重み小で評価）", () => {
+  it("ボーナスは重み0.5で評価に算入", () => {
+    // 成果50万+ボーナス20万×0.5+借入0 = 60万 / 予算120万 = 0.5
+    expect(evaluationRateWithBehavior({ seika: 500000, bonus: 200000, loan: 0, budget: 1200000 })).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("相対貸借ゼロサム（Q12）", () => {
+  it("貸し手-/借り手+", () => {
+    expect(zeroSumTransfer("A", "B", 100000)).toEqual([
+      { personId: "A", delta: -100000 },
+      { personId: "B", delta: 100000 },
+    ]);
   });
 });
 

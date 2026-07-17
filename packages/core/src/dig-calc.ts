@@ -408,6 +408,108 @@ export function promotionStepDual(args: {
   return 0;
 }
 
+// ── 期途中入社の累計（Q7・入社月除外・翌月〜評価時点） ──
+/** 2つの YYYY-MM の月差（b - a）。 */
+export function monthDiff(aYm: string, bYm: string): number {
+  const [ya, ma] = aYm.split("-").map(Number);
+  const [yb, mb] = bYm.split("-").map(Number);
+  if (!ya || !ma || !yb || !mb) throw new Error("invalid yearMonth");
+  return (yb - ya) * 12 + (mb - ma);
+}
+
+/**
+ * 累計対象月数（Q7）。入社月は除外し、翌月から対象年月（評価時点）まで。
+ * サイクル月数（四半期3/半期6）で上限クランプ。
+ */
+export function cumulativeMonths(joinedYm: string, targetYm: string, cycleMonths: number): number {
+  const elapsed = monthDiff(joinedYm, targetYm); // 入社月→対象月 = 翌月から数えた月数
+  return Math.max(0, Math.min(cycleMonths, elapsed));
+}
+
+/** 累計予算Dig（Q7）= 単月予算Dig × 累計対象月数。 */
+export function cumulativeBudgetElapsed(monthlyBudget: number, months: number): number {
+  return monthlyBudget * months;
+}
+
+// ── 管理職インセンのブレンド（Q9・個人+グループ） ──
+/** 個人インセン × w + グループインセン ×(1-w)。既定 個人70%/グループ30%。 */
+export function blendedIncentive(
+  personalIncentive: number,
+  groupIncentive: number,
+  personalWeight = 0.7,
+): number {
+  const w = Math.min(Math.max(personalWeight, 0), 1);
+  return personalIncentive * w + groupIncentive * (1 - w);
+}
+
+// ── クローバック（Q11・早期解約は期間比例で巻き戻し） ──
+/**
+ * 早期解約時に巻き戻す成果Dig（Q11案2）。
+ * 巻き戻し = 計上Dig × 残存期間/契約期間。monthsFulfilled は充足済み月数。
+ */
+export function clawback(totalDig: number, termMonths: number, monthsFulfilled: number): number {
+  if (termMonths <= 0) return 0;
+  const remaining = Math.max(0, termMonths - Math.max(0, monthsFulfilled));
+  return Math.round((totalDig * remaining) / termMonths);
+}
+
+// ── 超過分の持ち越し/インセン選択（Q3） ──
+export type SurplusChoice = "incentive" | "carryover";
+
+/**
+ * 超過分（surplus = max(成果−目標,0)）の配分（Q3）。
+ * incentive: 超過分 × 20% を現金インセンに。
+ * carryover: 超過分を翌期へ持ち越し（インセンは出さない）。
+ */
+export function surplusAllocation(
+  surplus: number,
+  choice: SurplusChoice,
+): { incentive: number; carryover: number } {
+  const s = Math.max(0, surplus);
+  if (choice === "carryover") return { incentive: 0, carryover: s };
+  return { incentive: s * INCENTIVE_RATE, carryover: 0 };
+}
+
+/** マイナス着地（成果<0）＝減給査定（Q3）。減給段数を返す（既存降級ロジックに準拠）。 */
+export function demotionOnNegative(seika: number, setting: Setting): PromotionStep {
+  if (seika >= 0) return 0;
+  // マイナスは強制的に最大降級（下げピッチ2段）
+  return promotionStep(-1, setting); // rate<0 → -2
+}
+
+// ── 安全弁（Q15・行動指標=ボーナスを評価に重み小で算入） ──
+/**
+ * 評価用の達成率（Q15案2）。ボーナスDig（行動指標）は重み behaviorWeight で算入。
+ * 借入は降級回避のため全額算入（Q1）。
+ */
+export function evaluationRateWithBehavior(args: {
+  seika: number;
+  bonus: number;
+  loan: number;
+  budget: number;
+  behaviorWeight?: number; // 既定 0.5（重み小）
+}): number {
+  const w = args.behaviorWeight ?? 0.5;
+  const actual = args.seika + args.bonus * w + args.loan;
+  return achievementRate(actual, args.budget);
+}
+
+// ── 相対貸借のゼロサム（Q12） ──
+/**
+ * 相対貸借のゼロサム調整（Q12案1）。承認時、貸し手Dig減算/借り手加算。
+ * 返り値は各人のDig増減。利息は当事者間で任意（ここでは元本のみ）。
+ */
+export function zeroSumTransfer(
+  lenderId: string,
+  borrowerId: string,
+  principal: number,
+): { personId: string; delta: number }[] {
+  return [
+    { personId: lenderId, delta: -principal },
+    { personId: borrowerId, delta: principal },
+  ];
+}
+
 // ── 全社統一給与テーブル（Q6・16期人事制度） ──
 /**
  * 昇降級段数に応じてラダー上を移動し、移動後の行と月額総支給を返す。
