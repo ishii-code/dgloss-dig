@@ -62,20 +62,25 @@ function memberEmail(memberId: string): string | null {
 }
 
 /**
- * 企業ID から担当者(FS/IS)を解決し、初期の折半 shares を返す。
+ * 企業（ID もしくは企業名）から担当者(FS/IS)を解決し、初期の折半 shares を返す。
  * FS(assigned_to) と IS(apo_creator) がいれば 50/50、FSのみなら 100。
+ * ※ ID整理までは **企業名でマッチング**（companyName）。整備後は companyId(法人番号等)へ。
  * ※ 本番は SP_CRM Supabase を直結して同ロジックで解決する。
  */
-export async function resolveAssigneesByCompany(
-  companyId: string | null,
-): Promise<{ shares: AssignmentShare[]; note: string }> {
-  if (!companyId) return { shares: [], note: "企業ID未設定" };
+export async function resolveAssigneesByCompany(input: {
+  companyId: string | null;
+  companyName: string | null;
+}): Promise<{ shares: AssignmentShare[]; note: string }> {
+  const { companyId, companyName } = input;
+  if (!companyId && !companyName) return { shares: [], note: "企業ID・企業名が未設定" };
 
-  // companyId は Account.id または corporate_number のどちらでも照合
+  // companyId(Account.id / 法人番号) を優先し、無ければ企業名で照合（暫定）
   const acc = SAMPLE_ACCOUNTS.find(
-    (a) => a.id === companyId || a.corporate_number === companyId,
+    (a) =>
+      (companyId && (a.id === companyId || a.corporate_number === companyId)) ||
+      (companyName && a.name === companyName),
   );
-  if (!acc) return { shares: [], note: `SP_CRMに企業ID ${companyId} が見つかりません` };
+  if (!acc) return { shares: [], note: `SP_CRMに企業「${companyName ?? companyId}」が見つかりません` };
 
   const opp = SAMPLE_OPPS.find((o) => o.account_id === acc.id);
   if (!opp) return { shares: [], note: `${acc.name} に商談がありません` };
