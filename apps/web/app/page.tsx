@@ -10,8 +10,11 @@ import {
   TabNav,
   type Tab,
 } from "@/components/ui";
+import { DEFAULT_SETTING } from "@dig/contracts";
+import { promotionStep } from "@dig/core";
 import { DiglossBank, FinanceConsole } from "@/components/bank";
-import { man, pct, rateColor } from "@/lib/format";
+import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
+import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
 import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
 
 const TABS: Tab[] = [
@@ -22,6 +25,7 @@ const TABS: Tab[] = [
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
+  { key: "settings", label: "設定", sub: "マスタ" },
 ];
 
 export default function Page() {
@@ -118,8 +122,14 @@ export default function Page() {
           <DiglossBank />
         ) : tab === "finance" ? (
           <FinanceConsole />
+        ) : tab === "bonus" ? (
+          <BonusDig />
+        ) : tab === "txn" ? (
+          <TransactionLog />
+        ) : tab === "release" ? (
+          <ReleaseNotes />
         ) : (
-          <Placeholder />
+          <SettingsView />
         )}
       </main>
     </div>
@@ -139,6 +149,7 @@ function MemberTable({ leg }: { leg: Leg }) {
             <th className="px-4 py-2.5 text-right font-semibold">達成率</th>
             <th className="px-4 py-2.5 text-right font-semibold">インセン</th>
             <th className="px-4 py-2.5 text-center font-semibold">ランク</th>
+            <th className="px-4 py-2.5 text-center font-semibold">昇降級</th>
           </tr>
         </thead>
         <tbody className="tabular">
@@ -161,6 +172,18 @@ function MemberTable({ leg }: { leg: Leg }) {
                 <td className="px-4 py-2.5 text-center">
                   <RankBadge rank={l.rank} />
                 </td>
+                <td className="px-4 py-2.5 text-center">
+                  {(() => {
+                    const step = promotionStep(l.achievementRate, DEFAULT_SETTING);
+                    return (
+                      <span
+                        className={`rounded-pill px-2 py-0.5 text-[11px] font-bold ${promotionStyle(step)}`}
+                      >
+                        {promotionLabel(step)}
+                      </span>
+                    );
+                  })()}
+                </td>
               </tr>
             );
           })}
@@ -169,14 +192,6 @@ function MemberTable({ leg }: { leg: Leg }) {
       <div className="px-4 py-2 text-[11px] text-ink-faint">
         ※ 未達メンバーは人ルート（コーチング／タレント管理）へ自動連携。成果Digは手入力（v1.1 Q3）。
       </div>
-    </div>
-  );
-}
-
-function Placeholder() {
-  return (
-    <div className="mt-10 rounded-card border border-dashed border-surface-border bg-surface-panel p-12 text-center text-ink-muted">
-      この画面は P2 以降で実装予定です（Digloss Bank / ボーナスDig / 取引ログ / リリースノート）。
     </div>
   );
 }
