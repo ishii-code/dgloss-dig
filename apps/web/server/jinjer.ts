@@ -45,16 +45,53 @@ async function getToken(): Promise<string> {
   return token;
 }
 
+/** レスポンスから従業員配列を取り出す（形の揺れに対応）。 */
+function extractList(json: unknown): Record<string, unknown>[] {
+  if (Array.isArray(json)) return json as Record<string, unknown>[];
+  const o = json as Record<string, unknown>;
+  for (const k of ["data", "employees", "results", "items", "list"]) {
+    if (Array.isArray(o?.[k])) return o[k] as Record<string, unknown>[];
+  }
+  // data.employees のような入れ子
+  const data = o?.data as Record<string, unknown> | undefined;
+  if (data) {
+    for (const k of ["employees", "results", "items", "list"]) {
+      if (Array.isArray(data[k])) return data[k] as Record<string, unknown>[];
+    }
+  }
+  return [];
+}
+
+/** 全ページ取得（200名でも取り切る）。page/limit を増やしつつ重複排除で終端検出。 */
 async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
   const token = await getToken();
-  const res = await fetch(`${JINJER_BASE}/v1/employees`, {
-    method: "GET",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`jinjer 従業員取得失敗: ${res.status}`);
-  const json = (await res.json()) as { data?: unknown };
-  const list = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
-  return list as Record<string, unknown>[];
+  const limit = 100;
+  const seen = new Set<string>();
+  const all: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const res = await fetch(`${JINJER_BASE}/v1/employees?limit=${limit}&page=${page}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      if (page === 1) throw new Error(`jinjer 従業員取得失敗: ${res.status}`);
+      break; // 2ページ目以降のエラーは終端扱い
+    }
+    const list = extractList(await res.json());
+    if (list.length === 0) break;
+    let added = 0;
+    for (const item of list) {
+      const key = String(item["employee_code"] ?? item["emp_code"] ?? item["code"] ?? item["id"] ?? JSON.stringify(item));
+      if (!seen.has(key)) {
+        seen.add(key);
+        all.push(item);
+        added += 1;
+      }
+    }
+    // ページングが効いていない/最終ページなら終了
+    if (list.length < limit || added === 0) break;
+  }
+  return all;
 }
 
 // ── 正規化（jinjerのフィールド名は複数候補にフォールバック）──
@@ -104,10 +141,12 @@ export async function fetchEmployeesForSync(): Promise<{
   employees: NormalizedEmployee[];
   excluded: NormalizedEmployee[];
   connected: boolean;
+  fetched: number; // jinjerから取得した生レコード数（診断用）
+  parsed: number; // 社員番号が取れて正規化できた数
 }> {
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
   const employees = all.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
   const excluded = all.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
-  return { employees, excluded, connected: jinjerConnected };
+  return { employees, excluded, connected: jinjerConnected, fetched: raw.length, parsed: all.length };
 }
