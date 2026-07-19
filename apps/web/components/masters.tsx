@@ -76,6 +76,23 @@ export function MemberMaster() {
       setMsg(`保存失敗: ${(e as Error).message}`);
     }
   }
+  async function syncJinjer() {
+    if (!confirm("jinjer（勤怠）から従業員マスタを同期します（CRM事業部・管理本部は除外）。よろしいですか？")) return;
+    try {
+      const r = await apiSend<{ connected: boolean; created: number; updated: number; synced: number; excludedCount: number }>(
+        "/api/members/sync-jinjer",
+        "POST",
+        { actor: ACTOR },
+      );
+      setMsg(
+        `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル）"}: ${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`jinjer同期失敗: ${(e as Error).message}`);
+    }
+  }
+
   async function del(personId: string) {
     if (!confirm(`${personId} を削除しますか？`)) return;
     try {
@@ -91,7 +108,13 @@ export function MemberMaster() {
 
   return (
     <>
-      <SectionHeader title="従業員マスタ" note="Person ID は手入力（v1.1 Q4）。全連携の突合キー。" />
+      <SectionHeader title="従業員マスタ" note="jinjer（勤怠）から自動連携。Person ID は社員番号で突合。" />
+      <div className="mb-3 flex items-center gap-3">
+        <button onClick={syncJinjer} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
+          jinjer（勤怠）から同期
+        </button>
+        <span className="text-xs text-ink-muted">CRM事業部・管理本部を除く全員を取込。給与は既存を保持。</span>
+      </div>
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
       )}

@@ -808,3 +808,65 @@ export async function settleRetirement(input: {
   });
   return { id: rec.id };
 }
+
+// ─────────────────────────────────────────────
+// jinjer（勤怠）連携: 従業員マスタ自動同期
+// ─────────────────────────────────────────────
+import { EXCLUDED_DIVISIONS, fetchEmployeesForSync } from "./jinjer";
+
+/** jinjerから従業員を取り込み Member へ upsert（CRM事業部・管理本部は除外）。給与は既存を保持。 */
+export async function syncFromJinjer(actor: string) {
+  const { employees, excluded, connected } = await fetchEmployeesForSync();
+  let created = 0;
+  let updated = 0;
+  for (const e of employees) {
+    const existing = await prisma.member.findUnique({ where: { personId: e.personId } });
+    const joinedOn = new Date(`${e.joinedOn}T00:00:00Z`);
+    if (existing) {
+      // 給与(basePay/positionBase)・職種・サイクルは既存を保持し、勤怠由来の項目のみ更新
+      await prisma.member.update({
+        where: { personId: e.personId },
+        data: {
+          name: e.name,
+          division: e.division,
+          position: e.position as Prisma.MemberUpdateInput["position"],
+          employmentType: e.employmentType as Prisma.MemberUpdateInput["employmentType"],
+          joinedOn,
+          status: "在籍",
+        },
+      });
+      updated += 1;
+    } else {
+      await prisma.member.create({
+        data: {
+          personId: e.personId,
+          name: e.name,
+          division: e.division,
+          position: e.position as Prisma.MemberCreateInput["position"],
+          jobType: null,
+          employmentType: e.employmentType as Prisma.MemberCreateInput["employmentType"],
+          basePay: 0,
+          positionBase: 0,
+          joinedOn,
+          evaluationCycle: "四半期",
+          status: "在籍",
+        },
+      });
+      created += 1;
+    }
+  }
+  await audit(actor, "member.sync.jinjer", "Member", null, {
+    connected,
+    created,
+    updated,
+    excluded: excluded.length,
+  });
+  return {
+    connected,
+    created,
+    updated,
+    synced: employees.length,
+    excludedDivisions: EXCLUDED_DIVISIONS,
+    excludedCount: excluded.length,
+  };
+}
