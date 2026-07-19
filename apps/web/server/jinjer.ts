@@ -38,10 +38,16 @@ async function getToken(): Promise<string> {
       "X-SECRET-KEY": process.env.JINJER_SECRET_KEY ?? "",
     },
   });
-  if (!res.ok) throw new Error(`jinjer token取得失敗: ${res.status}`);
-  const json = (await res.json()) as { data?: { access_token?: string } };
-  const token = json.data?.access_token;
-  if (!token) throw new Error("jinjer access_token が取得できません");
+  const bodyText = await res.text();
+  if (!res.ok) throw new Error(`jinjer /v2/token ${res.status}: ${bodyText.slice(0, 300)}`);
+  let json: { data?: { access_token?: string }; access_token?: string };
+  try {
+    json = JSON.parse(bodyText);
+  } catch {
+    throw new Error(`jinjer /v2/token レスポンスがJSONでない: ${bodyText.slice(0, 200)}`);
+  }
+  const token = json.data?.access_token ?? json.access_token;
+  if (!token) throw new Error(`jinjer access_token が取れません（応答: ${bodyText.slice(0, 200)}）`);
   return token;
 }
 
@@ -74,7 +80,7 @@ async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      if (page === 1) throw new Error(`jinjer 従業員取得失敗: ${res.status}`);
+      if (page === 1) throw new Error(`jinjer /v1/employees ${res.status}: ${(await res.text()).slice(0, 300)}`);
       break; // 2ページ目以降のエラーは終端扱い
     }
     const list = extractList(await res.json());
