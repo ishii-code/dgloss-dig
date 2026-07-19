@@ -79,13 +79,13 @@ export function MemberMaster() {
   async function syncJinjer() {
     if (!confirm("jinjer（勤怠）から従業員マスタを同期します（CRM事業部・管理本部は除外）。よろしいですか？")) return;
     try {
-      const r = await apiSend<{ connected: boolean; created: number; updated: number; synced: number; excludedCount: number }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; created: number; updated: number; synced: number; excludedCount: number }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
       setMsg(
-        `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル）"}: ${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`,
+        `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件→取込${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`,
       );
       await load();
     } catch (e) {
