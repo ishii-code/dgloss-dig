@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/ishii-code/dgloss-dig/compare/v1.0.0...v1.1.0) (2026-07-27)
+
+
+### Features
+
+* **release-notes:** アプリ内リリースノートをGitHub Releaseから実行時取得 ([#31](https://github.com/ishii-code/dgloss-dig/issues/31)) ([a2b4110](https://github.com/ishii-code/dgloss-dig/commit/a2b4110f59e54d21d55fe23f0d20fd0152a5d767))
+
 # 1.0.0 (2026-07-27)
 
 
