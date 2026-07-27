@@ -1,11 +1,11 @@
 /**
  * 会計年度・四半期のユーティリティ。
- * 会計年度は 7 月始まり（FY ラベル＝開始年）。
- *   1Q=7-9月 / 2Q=10-12月 / 3Q=1-3月 / 4Q=4-6月
+ * 会計年度は 6 月始まり（FY ラベル＝開始年）。
+ *   1Q=6-8月 / 2Q=9-11月 / 3Q=12-2月 / 4Q=3-5月
  * 例: 2026-01 は FY2025 の 3Q（"2025-3Q"）。
  * ※ 期首を変える場合は FISCAL_START_MONTH のみ変更すればよい。
  */
-export const FISCAL_START_MONTH = 7; // 1-12
+export const FISCAL_START_MONTH = 6; // 1-12
 
 /** ym(YYYY-MM) → 会計年度(開始年)と四半期(1-4)。 */
 export function fiscalOf(ym: string): { fyYear: number; quarter: number } {
