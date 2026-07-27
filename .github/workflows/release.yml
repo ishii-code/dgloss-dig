@@ -23,14 +23,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # SemVer・CHANGELOG・tag・GitHub Release を Conventional Commits から自動生成
-      # package.json の version も @semantic-release/npm で bump（公開はしない）
-      - run: >-
-          pnpm dlx
-          -p semantic-release
-          -p @semantic-release/changelog
-          -p @semantic-release/git
-          -p @semantic-release/npm
-          semantic-release
+      # SemVer・CHANGELOG・tag・GitHub Release を Conventional Commits から自動生成。
+      # プラグインは devDependencies に含めて exec で解決（dlx だとプラグインを解決できない）。
+      - run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
