@@ -942,7 +942,8 @@ import { EXCLUDED_DIVISIONS, fetchEmployeesForSync } from "./jinjer";
 
 /** jinjerから従業員を取り込み Member へ upsert（CRM事業部・管理本部は除外）。給与は既存を保持。 */
 export async function syncFromJinjer(actor: string) {
-  const { employees, excluded, connected, fetched, parsed } = await fetchEmployeesForSync();
+  const { employees, excluded, connected, fetched, parsed, rawSampleKeys, rawSample } =
+    await fetchEmployeesForSync();
   let created = 0;
   let updated = 0;
   for (const e of employees) {
@@ -998,5 +999,8 @@ export async function syncFromJinjer(actor: string) {
     synced: employees.length,
     excludedDivisions: EXCLUDED_DIVISIONS,
     excludedCount: excluded.length,
+    // マッピング診断用（取込0名時の原因特定）。parsed=0 のときのみ本文/キーを載せる。
+    rawSampleKeys,
+    rawSample: parsed === 0 ? rawSample : null,
   };
 }
