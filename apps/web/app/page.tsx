@@ -33,6 +33,7 @@ import {
   YEAR_MONTH,
 } from "@/lib/mock";
 import {
+  currentYm,
   fiscalOf,
   monthLabel,
   monthsOfQuarter,
@@ -74,14 +75,23 @@ export default function Page() {
   // ログイン中ロール（本番は Supabase Auth 由来。現状は切替で権限デモ）
   const [role, setRole] = useState<Role>("SUPER_ADMIN");
   const [unread, setUnread] = useState(0);
-  // 対象月（YYYY-MM）。四半期/月セレクタで切替。既定はアプリ共通の YEAR_MONTH。
+  // 対象月（YYYY-MM）。四半期/月セレクタで切替。
+  // SSRとのhydration不一致を避けるため初期値は固定の YEAR_MONTH とし、
+  // マウント後に現在月へ更新する（下の useEffect）。
   const [ym, setYm] = useState<string>(YEAR_MONTH);
+  // 四半期リストの基準（選択で動かさず安定させるため ym とは別に保持）。
+  const [anchorYm, setAnchorYm] = useState<string>(YEAR_MONTH);
+  useEffect(() => {
+    const cur = currentYm();
+    setYm(cur);
+    setAnchorYm(cur);
+  }, []);
   // 予実モニター/メンバー評価の元データ。既定は mock、DB取得成功で実データへ差し替え。
   const [members, setMembers] = useState<MemberRow[]>(MEMBERS);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
 
-  // セレクタ用の四半期一覧と、対象月が属する四半期の3ヶ月。
-  const quarters = useMemo(() => quarterOptions(ym), [ym]);
+  // セレクタ用の四半期一覧（基準=現在月）と、対象月が属する四半期の3ヶ月。
+  const quarters = useMemo(() => quarterOptions(anchorYm), [anchorYm]);
   const { fyYear, quarter } = useMemo(() => fiscalOf(ym), [ym]);
   const monthsInQuarter = useMemo(() => monthsOfQuarter(fyYear, quarter), [fyYear, quarter]);
 
