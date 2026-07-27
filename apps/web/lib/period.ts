@@ -47,18 +47,26 @@ export interface QuarterOption {
 }
 
 /**
- * セレクタ用の四半期一覧。基準 ym を含む会計年度を中心に、
- * 過去 spanYears 年ぶん〜当年までの全四半期を新しい順で返す。
+ * セレクタ用の四半期一覧。基準 ym の四半期を先頭に、そこから
+ * 過去へ count 個ぶんを新しい順で返す（未来の四半期は含めない）。
  */
-export function quarterOptions(centerYm: string, spanYears = 2): QuarterOption[] {
-  const { fyYear } = fiscalOf(centerYm);
+export function quarterOptions(anchorYm: string, count = 12): QuarterOption[] {
+  let { fyYear, quarter } = fiscalOf(anchorYm);
   const out: QuarterOption[] = [];
-  for (let fy = fyYear; fy >= fyYear - spanYears; fy--) {
-    for (let q = 4; q >= 1; q--) {
-      out.push({ fyYear: fy, quarter: q, label: quarterLabel(fy, q) });
+  for (let i = 0; i < count; i++) {
+    out.push({ fyYear, quarter, label: quarterLabel(fyYear, quarter) });
+    quarter -= 1;
+    if (quarter < 1) {
+      quarter = 4;
+      fyYear -= 1;
     }
   }
   return out;
+}
+
+/** 現在の年月（YYYY-MM）。クライアントのローカル時刻基準。 */
+export function currentYm(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
 /** 月表示ラベル（例: 2026-01 → "2026年1月"）。 */
