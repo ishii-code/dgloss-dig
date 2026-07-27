@@ -4,16 +4,19 @@
  *   認証:  GET /v2/token  ヘッダ X-API-KEY / X-SECRET-KEY → data.access_token（4h有効）
  *   従業員: GET /v1/employees  ヘッダ Authorization: Bearer <token>
  *
- * 本番: JINJER_API_KEY / JINJER_SECRET_KEY を設定すると実APIから取得。
+ * 本番: JINJER_API_KEY と シークレット（JINJER_SECRET_KEY または
+ * JINJER_API_SECRET のどちらでも可）を設定すると実APIから取得。
  * 未設定時: 下記サンプルで同期ロジック（除外フィルタ・upsert）を検証。
  *
  * 取込対象: CRM事業部・管理本部 以外の全員（EXCLUDED_DIVISIONS）。
  */
 
 const JINJER_BASE = process.env.JINJER_API_BASE ?? "https://api.jinjer.biz";
-export const jinjerConnected = Boolean(
-  process.env.JINJER_API_KEY && process.env.JINJER_SECRET_KEY,
-);
+// キー名の揺れに対応（Vercel 側の設定名が JINJER_API_SECRET のことがある）。
+const JINJER_API_KEY = process.env.JINJER_API_KEY ?? "";
+const JINJER_SECRET_KEY =
+  process.env.JINJER_SECRET_KEY ?? process.env.JINJER_API_SECRET ?? "";
+export const jinjerConnected = Boolean(JINJER_API_KEY && JINJER_SECRET_KEY);
 
 /** 取込から除外する事業部/部署 */
 export const EXCLUDED_DIVISIONS = ["CRM事業部", "管理本部"];
@@ -34,8 +37,8 @@ async function getToken(): Promise<string> {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
-      "X-API-KEY": process.env.JINJER_API_KEY ?? "",
-      "X-SECRET-KEY": process.env.JINJER_SECRET_KEY ?? "",
+      "X-API-KEY": JINJER_API_KEY,
+      "X-SECRET-KEY": JINJER_SECRET_KEY,
     },
   });
   const bodyText = await res.text();
