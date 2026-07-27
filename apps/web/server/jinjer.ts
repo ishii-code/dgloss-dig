@@ -155,10 +155,22 @@ export async function fetchEmployeesForSync(): Promise<{
   connected: boolean;
   fetched: number; // jinjerから取得した生レコード数（診断用）
   parsed: number; // 社員番号が取れて正規化できた数
+  rawSampleKeys: string[]; // 先頭レコードの項目名（マッピング診断用）
+  rawSample: Record<string, unknown> | null; // 先頭レコードそのもの（マッピング診断用）
 }> {
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
   const employees = all.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
   const excluded = all.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
-  return { employees, excluded, connected: jinjerConnected, fetched: raw.length, parsed: all.length };
+  const rawSample = raw[0] ?? null;
+  const rawSampleKeys = rawSample ? Object.keys(rawSample) : [];
+  return {
+    employees,
+    excluded,
+    connected: jinjerConnected,
+    fetched: raw.length,
+    parsed: all.length,
+    rawSampleKeys,
+    rawSample,
+  };
 }

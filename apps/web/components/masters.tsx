@@ -79,14 +79,18 @@ export function MemberMaster() {
   async function syncJinjer() {
     if (!confirm("jinjer（勤怠）から従業員マスタを同期します（CRM事業部・管理本部は除外）。よろしいですか？")) return;
     try {
-      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; created: number; updated: number; synced: number; excludedCount: number }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
-      setMsg(
-        `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件→取込${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`,
-      );
+      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件→取込${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`;
+      // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
+      if (r.fetched > 0 && r.parsed === 0) {
+        msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;
+        if (r.rawSample) msg += `\n先頭レコード: ${JSON.stringify(r.rawSample).slice(0, 800)}`;
+      }
+      setMsg(msg);
       await load();
     } catch (e) {
       setMsg(`jinjer同期失敗: ${(e as Error).message}`);
@@ -118,7 +122,7 @@ export function MemberMaster() {
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
       )}
-      {msg && <div className="mb-3 rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">{msg}</div>}
+      {msg && <div className="mb-3 whitespace-pre-wrap break-all rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">{msg}</div>}
 
       <div className="mb-4 overflow-x-auto rounded-card border border-surface-border bg-white shadow-card">
         <table className="w-full text-sm">
