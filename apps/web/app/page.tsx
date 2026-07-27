@@ -29,10 +29,16 @@ import {
   type Leg,
   MEMBERS,
   type MemberRow,
-  QUARTER,
   totalsOf,
   YEAR_MONTH,
 } from "@/lib/mock";
+import {
+  fiscalOf,
+  monthLabel,
+  monthsOfQuarter,
+  quarterLabelOf,
+  quarterOptions,
+} from "@/lib/period";
 import { buildMembersFromDb, type EvaluationDto, type MemberDto } from "@/lib/evaluations";
 
 const TABS: Tab[] = [
@@ -68,9 +74,16 @@ export default function Page() {
   // ログイン中ロール（本番は Supabase Auth 由来。現状は切替で権限デモ）
   const [role, setRole] = useState<Role>("SUPER_ADMIN");
   const [unread, setUnread] = useState(0);
+  // 対象月（YYYY-MM）。四半期/月セレクタで切替。既定はアプリ共通の YEAR_MONTH。
+  const [ym, setYm] = useState<string>(YEAR_MONTH);
   // 予実モニター/メンバー評価の元データ。既定は mock、DB取得成功で実データへ差し替え。
   const [members, setMembers] = useState<MemberRow[]>(MEMBERS);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
+
+  // セレクタ用の四半期一覧と、対象月が属する四半期の3ヶ月。
+  const quarters = useMemo(() => quarterOptions(ym), [ym]);
+  const { fyYear, quarter } = useMemo(() => fiscalOf(ym), [ym]);
+  const monthsInQuarter = useMemo(() => monthsOfQuarter(fyYear, quarter), [fyYear, quarter]);
 
   const account = ACCOUNTS[role];
   const t = useMemo(() => totalsOf(members, leg), [members, leg]);
@@ -91,9 +104,10 @@ export default function Page() {
 
   // 実データ（評価）を取得。成功かつ1件以上なら実データ表示、失敗/0件は mock フォールバック。
   const loadMembers = useCallback(async () => {
+    setSource("loading");
     try {
       const [evals, mem] = await Promise.all([
-        apiGet<EvaluationDto[]>(`/api/evaluations?ym=${YEAR_MONTH}`),
+        apiGet<EvaluationDto[]>(`/api/evaluations?ym=${ym}`),
         apiGet<MemberDto[]>(`/api/members`),
       ]);
       if (Array.isArray(evals) && evals.length > 0) {
@@ -107,7 +121,7 @@ export default function Page() {
       setMembers(MEMBERS);
       setSource("mock");
     }
-  }, []);
+  }, [ym]);
   useEffect(() => {
     void loadMembers();
   }, [loadMembers]);
@@ -123,10 +137,10 @@ export default function Page() {
       const r = await apiSend<{ created: number; skipped: number; total: number }>(
         "/api/evaluations/generate",
         "POST",
-        { yearMonth: YEAR_MONTH, actor: account.id },
+        { yearMonth: ym, actor: account.id },
       );
       setGenMsg(
-        `評価台帳を生成しました: 新規 ${r.created} 件 / 既存 ${r.skipped} 件（対象 ${r.total} 名）`,
+        `${monthLabel(ym)}の評価台帳を生成しました: 新規 ${r.created} 件 / 既存 ${r.skipped} 件（対象 ${r.total} 名）`,
       );
       await loadMembers();
     } catch (e) {
@@ -134,7 +148,7 @@ export default function Page() {
     } finally {
       setGenerating(false);
     }
-  }, [account.id, loadMembers]);
+  }, [account.id, loadMembers, ym]);
 
   // ロールで表示可能なタブに絞り込み
   const visibleTabs = useMemo(() => TABS.filter((t) => canAccessTab(role, t.key)), [role]);
@@ -155,9 +169,32 @@ export default function Page() {
         {/* フィルタ行 */}
         <div className="mt-6 flex flex-wrap items-center gap-4 text-sm">
           <span className="text-ink-muted">対象Q</span>
-          <span className="rounded-card border border-surface-border bg-white px-3 py-1.5 font-semibold">
-            {QUARTER}（{leg === "monthly" ? "単月" : "累計"}）
-          </span>
+          <select
+            value={quarterLabelOf(ym)}
+            onChange={(e) => {
+              const q = quarters.find((o) => o.label === e.target.value);
+              if (q) setYm(monthsOfQuarter(q.fyYear, q.quarter)[0]);
+            }}
+            className="rounded-card border border-surface-border bg-white px-3 py-1.5 font-semibold"
+          >
+            {quarters.map((o) => (
+              <option key={o.label} value={o.label}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span className="ml-2 text-ink-muted">対象月</span>
+          <select
+            value={ym}
+            onChange={(e) => setYm(e.target.value)}
+            className="rounded-card border border-surface-border bg-white px-3 py-1.5 font-semibold"
+          >
+            {monthsInQuarter.map((m) => (
+              <option key={m} value={m}>
+                {monthLabel(m)}
+              </option>
+            ))}
+          </select>
           <span className="ml-2 text-ink-muted">集計</span>
           <div className="inline-flex rounded-card border border-surface-border bg-white p-0.5">
             {(["monthly", "cumulative"] as const).map((l) => (
@@ -196,7 +233,7 @@ export default function Page() {
         {source === "mock" && isAdmin && (
           <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
             <span className="text-semantic-warn">
-              評価データが未生成のためサンプル表示中です。在籍メンバーの評価台帳（{QUARTER} / {YEAR_MONTH}）を生成すると実データ表示に切り替わります。
+              評価データが未生成のためサンプル表示中です。在籍メンバーの評価台帳（{quarterLabelOf(ym)} / {monthLabel(ym)}）を生成すると実データ表示に切り替わります。
             </span>
             <button
               onClick={() => void generate()}
