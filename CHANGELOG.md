@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/ishii-code/dgloss-dig/compare/v1.1.0...v1.1.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **header:** ヘッダのバージョン表示を実バージョン(package.json)に連動 ([#32](https://github.com/ishii-code/dgloss-dig/issues/32)) ([e9301bc](https://github.com/ishii-code/dgloss-dig/commit/e9301bcf6e8aed6957d4c71047bcd6ed709d3bfd))
+
 # [1.1.0](https://github.com/ishii-code/dgloss-dig/compare/v1.0.0...v1.1.0) (2026-07-27)
 
 
