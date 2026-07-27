@@ -21,7 +21,7 @@ import { PeriodClose } from "@/components/period-close";
 import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
 import { SalaryTable } from "@/components/salary-table";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiSend } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
 import {
@@ -90,32 +90,51 @@ export default function Page() {
   }, [refreshUnread]);
 
   // 実データ（評価）を取得。成功かつ1件以上なら実データ表示、失敗/0件は mock フォールバック。
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const [evals, mem] = await Promise.all([
-          apiGet<EvaluationDto[]>(`/api/evaluations?ym=${YEAR_MONTH}`),
-          apiGet<MemberDto[]>(`/api/members`),
-        ]);
-        if (!alive) return;
-        if (Array.isArray(evals) && evals.length > 0) {
-          setMembers(buildMembersFromDb(evals, mem ?? []));
-          setSource("db");
-        } else {
-          setMembers(MEMBERS);
-          setSource("mock");
-        }
-      } catch {
-        if (!alive) return;
+  const loadMembers = useCallback(async () => {
+    try {
+      const [evals, mem] = await Promise.all([
+        apiGet<EvaluationDto[]>(`/api/evaluations?ym=${YEAR_MONTH}`),
+        apiGet<MemberDto[]>(`/api/members`),
+      ]);
+      if (Array.isArray(evals) && evals.length > 0) {
+        setMembers(buildMembersFromDb(evals, mem ?? []));
+        setSource("db");
+      } else {
         setMembers(MEMBERS);
         setSource("mock");
       }
-    })();
-    return () => {
-      alive = false;
-    };
+    } catch {
+      setMembers(MEMBERS);
+      setSource("mock");
+    }
   }, []);
+  useEffect(() => {
+    void loadMembers();
+  }, [loadMembers]);
+
+  // 管理者操作: 在籍メンバーから対象月の評価台帳を生成（実データ化の初期投入）。
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg] = useState<string | null>(null);
+  const isAdmin = role === "SUPER_ADMIN" || role === "ADMIN";
+  const generate = useCallback(async () => {
+    setGenerating(true);
+    setGenMsg(null);
+    try {
+      const r = await apiSend<{ created: number; skipped: number; total: number }>(
+        "/api/evaluations/generate",
+        "POST",
+        { yearMonth: YEAR_MONTH, actor: account.id },
+      );
+      setGenMsg(
+        `評価台帳を生成しました: 新規 ${r.created} 件 / 既存 ${r.skipped} 件（対象 ${r.total} 名）`,
+      );
+      await loadMembers();
+    } catch (e) {
+      setGenMsg(`生成失敗: ${(e as Error).message}`);
+    } finally {
+      setGenerating(false);
+    }
+  }, [account.id, loadMembers]);
 
   // ロールで表示可能なタブに絞り込み
   const visibleTabs = useMemo(() => TABS.filter((t) => canAccessTab(role, t.key)), [role]);
@@ -172,6 +191,23 @@ export default function Page() {
             即時速報
           </span>
         </div>
+
+        {/* 実データ化: 評価台帳が未生成のときの管理者向けアクション */}
+        {source === "mock" && isAdmin && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+            <span className="text-semantic-warn">
+              評価データが未生成のためサンプル表示中です。在籍メンバーの評価台帳（{QUARTER} / {YEAR_MONTH}）を生成すると実データ表示に切り替わります。
+            </span>
+            <button
+              onClick={() => void generate()}
+              disabled={generating}
+              className="ml-auto shrink-0 rounded-card bg-brand-primary px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+            >
+              {generating ? "生成中…" : "実データを生成"}
+            </button>
+          </div>
+        )}
+        {genMsg && <div className="mt-2 text-xs text-ink-muted">{genMsg}</div>}
 
         {activeTab === "monitor" ? (
           <>
