@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/ishii-code/dgloss-dig/compare/v1.1.1...v1.2.0) (2026-07-27)
+
+
+### Features
+
+* **jinjer:** 取込0名時にレコード項目名を診断表示（マッピング特定用） ([#33](https://github.com/ishii-code/dgloss-dig/issues/33)) ([04f259b](https://github.com/ishii-code/dgloss-dig/commit/04f259b9c65f1b54d195637e7418383195c414ef))
+
 ## [1.1.1](https://github.com/ishii-code/dgloss-dig/compare/v1.1.0...v1.1.1) (2026-07-27)
 
 
