@@ -21,7 +21,7 @@ export function Header({
           <span className="text-ink-faint">/</span>
           <span className="text-[15px] font-bold text-ink">Dig評価</span>
           <span className="rounded-pill bg-blue-50 px-2 py-0.5 text-xs font-semibold text-brand-primary">
-            v0.1.0
+            v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-ink-muted">
