@@ -1,14 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { DEFAULT_SETTING } from "@dig/contracts";
 import { man, yen } from "@/lib/format";
+import { apiGet } from "@/lib/api";
 import {
   BONUS_ITEMS,
   BONUS_RECORD_VIEWS,
   BONUS_TOTAL,
   bonusTotalsByMember,
 } from "@/lib/bonus";
-import { RELEASES } from "@/lib/releases";
+import { RELEASES, type Release } from "@/lib/releases";
 import { netByMember, TXN_TOTAL, TXN_VIEWS } from "@/lib/txn";
 import { SectionHeader } from "./ui";
 
@@ -199,11 +201,35 @@ export function TransactionLog() {
 
 // ── リリースノート ──
 export function ReleaseNotes() {
+  // GitHub Releases（semantic-release 自動生成）を実行時取得。失敗時は同梱の静的リストにフォールバック。
+  const [releases, setReleases] = useState<Release[]>(RELEASES);
+  const [note, setNote] = useState("読み込み中…");
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const data = await apiGet<Release[]>("/api/releases");
+        if (!alive) return;
+        if (Array.isArray(data) && data.length > 0) {
+          setReleases(data);
+          setNote("GitHub Release から自動取得");
+        } else {
+          setNote("GitHub Release が未作成のため同梱リストを表示");
+        }
+      } catch {
+        if (!alive) return;
+        setNote("取得失敗のため同梱リストを表示");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   return (
     <>
-      <SectionHeader title="リリースノート" note="dgloss RELEASE.md 準拠（将来 semantic-release で自動集約）" />
+      <SectionHeader title="リリースノート" note={note} />
       <div className="space-y-4">
-        {RELEASES.map((r) => (
+        {releases.map((r) => (
           <div key={r.version} className="rounded-card border border-surface-border bg-white p-5 shadow-card">
             <div className="flex items-center gap-3">
               <span className="rounded-pill bg-brand-primary px-2.5 py-0.5 text-sm font-bold text-white">
