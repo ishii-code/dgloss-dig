@@ -89,11 +89,12 @@ export interface Totals {
   incentive: number;
 }
 
-export function totals(leg: Leg): Totals {
+/** 任意のメンバー配列から全社合計を算出（実データ／mock 共通）。 */
+export function totalsOf(members: MemberRow[], leg: Leg): Totals {
   let budget = 0;
   let actual = 0;
   let incentive = 0;
-  for (const m of MEMBERS) {
+  for (const m of members) {
     budget += leg === "monthly" ? m.eval.monthlyBudgetDig : m.eval.cumulativeBudgetDig;
     actual += m.eval[leg].actualDig;
     incentive += m.incentive;
@@ -101,14 +102,20 @@ export function totals(leg: Leg): Totals {
   return { budget, actual, rate: budget === 0 ? 0 : actual / budget, incentive };
 }
 
+/** 後方互換: mock の MEMBERS を対象にした合計。 */
+export function totals(leg: Leg): Totals {
+  return totalsOf(MEMBERS, leg);
+}
+
 export interface DivisionRow extends Totals {
   division: string;
   count: number;
 }
 
-export function byDivision(leg: Leg): DivisionRow[] {
+/** 任意のメンバー配列から事業部別集計を算出（実データ／mock 共通）。 */
+export function byDivisionOf(members: MemberRow[], leg: Leg): DivisionRow[] {
   const map = new Map<string, DivisionRow>();
-  for (const m of MEMBERS) {
+  for (const m of members) {
     const cur =
       map.get(m.division) ??
       { division: m.division, budget: 0, actual: 0, rate: 0, incentive: 0, count: 0 };
@@ -121,4 +128,9 @@ export function byDivision(leg: Leg): DivisionRow[] {
   const rows = [...map.values()];
   for (const r of rows) r.rate = r.budget === 0 ? 0 : r.actual / r.budget;
   return rows.sort((a, b) => b.actual - a.actual);
+}
+
+/** 後方互換: mock の MEMBERS を対象にした事業部別集計。 */
+export function byDivision(leg: Leg): DivisionRow[] {
+  return byDivisionOf(MEMBERS, leg);
 }

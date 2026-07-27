@@ -24,7 +24,16 @@ import { SalaryTable } from "@/components/salary-table";
 import { apiGet } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { man, pct, promotionLabel, promotionStyle, rateColor } from "@/lib/format";
-import { byDivision, type Leg, MEMBERS, QUARTER, totals } from "@/lib/mock";
+import {
+  byDivisionOf,
+  type Leg,
+  MEMBERS,
+  type MemberRow,
+  QUARTER,
+  totalsOf,
+  YEAR_MONTH,
+} from "@/lib/mock";
+import { buildMembersFromDb, type EvaluationDto, type MemberDto } from "@/lib/evaluations";
 
 const TABS: Tab[] = [
   { key: "monitor", label: "予実モニター", sub: "毎日更新" },
@@ -59,10 +68,13 @@ export default function Page() {
   // ログイン中ロール（本番は Supabase Auth 由来。現状は切替で権限デモ）
   const [role, setRole] = useState<Role>("SUPER_ADMIN");
   const [unread, setUnread] = useState(0);
+  // 予実モニター/メンバー評価の元データ。既定は mock、DB取得成功で実データへ差し替え。
+  const [members, setMembers] = useState<MemberRow[]>(MEMBERS);
+  const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
 
   const account = ACCOUNTS[role];
-  const t = useMemo(() => totals(leg), [leg]);
-  const divs = useMemo(() => byDivision(leg), [leg]);
+  const t = useMemo(() => totalsOf(members, leg), [members, leg]);
+  const divs = useMemo(() => byDivisionOf(members, leg), [members, leg]);
 
   // 未読数（iPhoneバッジ風）を取得
   const refreshUnread = useCallback(async () => {
@@ -76,6 +88,34 @@ export default function Page() {
   useEffect(() => {
     void refreshUnread();
   }, [refreshUnread]);
+
+  // 実データ（評価）を取得。成功かつ1件以上なら実データ表示、失敗/0件は mock フォールバック。
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [evals, mem] = await Promise.all([
+          apiGet<EvaluationDto[]>(`/api/evaluations?ym=${YEAR_MONTH}`),
+          apiGet<MemberDto[]>(`/api/members`),
+        ]);
+        if (!alive) return;
+        if (Array.isArray(evals) && evals.length > 0) {
+          setMembers(buildMembersFromDb(evals, mem ?? []));
+          setSource("db");
+        } else {
+          setMembers(MEMBERS);
+          setSource("mock");
+        }
+      } catch {
+        if (!alive) return;
+        setMembers(MEMBERS);
+        setSource("mock");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // ロールで表示可能なタブに絞り込み
   const visibleTabs = useMemo(() => TABS.filter((t) => canAccessTab(role, t.key)), [role]);
@@ -113,7 +153,22 @@ export default function Page() {
               </button>
             ))}
           </div>
-          <span className="ml-auto rounded-pill bg-amber-50 px-2 py-0.5 text-xs font-semibold text-semantic-warn">
+          <span
+            className={`ml-auto rounded-pill px-2 py-0.5 text-xs font-bold ${
+              source === "db"
+                ? "bg-emerald-100 text-semantic-success"
+                : source === "mock"
+                  ? "bg-amber-100 text-semantic-warn"
+                  : "bg-slate-100 text-ink-muted"
+            }`}
+          >
+            {source === "db"
+              ? "● DB接続（実データ）"
+              : source === "mock"
+                ? "○ モック表示（DB未接続／評価データなし）"
+                : "接続中…"}
+          </span>
+          <span className="rounded-pill bg-amber-50 px-2 py-0.5 text-xs font-semibold text-semantic-warn">
             即時速報
           </span>
         </div>
@@ -121,7 +176,7 @@ export default function Page() {
         {activeTab === "monitor" ? (
           <>
             {/* 全社 */}
-            <SectionHeader title="全社" note={`${MEMBERS.length}名の合計`} />
+            <SectionHeader title="全社" note={`${members.length}名の合計`} />
             <div className="grid gap-4 md:grid-cols-2">
               <BigMetricCard
                 label="全社 実績Dig"
@@ -163,12 +218,12 @@ export default function Page() {
 
             {/* メンバー一覧（残高計算） */}
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
-            <MemberTable leg={leg} />
+            <MemberTable leg={leg} members={members} />
           </>
         ) : activeTab === "members" ? (
           <>
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
-            <MemberTable leg={leg} />
+            <MemberTable leg={leg} members={members} />
           </>
         ) : activeTab === "bank" ? (
           <DiglossBank />
@@ -202,7 +257,7 @@ export default function Page() {
   );
 }
 
-function MemberTable({ leg }: { leg: Leg }) {
+function MemberTable({ leg, members }: { leg: Leg; members: MemberRow[] }) {
   return (
     <div className="overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
       <table className="w-full text-sm">
@@ -219,7 +274,7 @@ function MemberTable({ leg }: { leg: Leg }) {
           </tr>
         </thead>
         <tbody className="tabular">
-          {MEMBERS.map((m) => {
+          {members.map((m) => {
             const budget =
               leg === "monthly" ? m.eval.monthlyBudgetDig : m.eval.cumulativeBudgetDig;
             const l = m.eval[leg];
