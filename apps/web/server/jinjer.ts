@@ -71,14 +71,17 @@ function extractList(json: unknown): Record<string, unknown>[] {
   return [];
 }
 
-/** 全ページ取得（200名でも取り切る）。page/limit を増やしつつ重複排除で終端検出。 */
+/**
+ * 全ページ取得。jinjer /v1/employees は `limit` を受け付けない
+ * （E400QP0023）ため page のみでページングし、重複排除で終端検出する。
+ * page が無視される実装でも「新規0件で終端」により安全に停止する。
+ */
 async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
   const token = await getToken();
-  const limit = 100;
   const seen = new Set<string>();
   const all: Record<string, unknown>[] = [];
   for (let page = 1; page <= 100; page++) {
-    const res = await fetch(`${JINJER_BASE}/v1/employees?limit=${limit}&page=${page}`, {
+    const res = await fetch(`${JINJER_BASE}/v1/employees?page=${page}`, {
       method: "GET",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     });
@@ -97,8 +100,8 @@ async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
         added += 1;
       }
     }
-    // ページングが効いていない/最終ページなら終了
-    if (list.length < limit || added === 0) break;
+    // 新規が増えない（=同じ結果 or 最終ページ）なら終了
+    if (added === 0) break;
   }
   return all;
 }
