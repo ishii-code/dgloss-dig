@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/ishii-code/dgloss-dig/compare/v1.2.0...v1.2.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **jinjer:** 実レスポンス構造(id/company ネスト)に合わせて取込を修正 ([#34](https://github.com/ishii-code/dgloss-dig/issues/34)) ([f233851](https://github.com/ishii-code/dgloss-dig/commit/f233851be3707a6b31284cfa5cd459a1aa25d05d))
+
 # [1.2.0](https://github.com/ishii-code/dgloss-dig/compare/v1.1.1...v1.2.0) (2026-07-27)
 
 
