@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/ishii-code/dgloss-dig/compare/v1.3.0...v1.4.0) (2026-07-28)
+
+
+### Features
+
+* **jinjer:** 所属マッピング探索の診断を拡張 ([#37](https://github.com/ishii-code/dgloss-dig/issues/37)) ([3663d97](https://github.com/ishii-code/dgloss-dig/commit/3663d970b0aa4e4f22a9c1ea6189ae3c7b3b256f))
+
 # [1.3.0](https://github.com/ishii-code/dgloss-dig/compare/v1.2.2...v1.3.0) (2026-07-28)
 
 
