@@ -77,14 +77,14 @@ export function MemberMaster() {
     }
   }
   async function syncJinjer() {
-    if (!confirm("jinjer（勤怠）から従業員マスタを同期します（CRM事業部・管理本部は除外）。よろしいですか？")) return;
+    if (!confirm("jinjer から在籍の従業員マスタを同期します（退職者は除外。事業部/部署・給与は jinjer 従業員APIに含まれないため未設定）。よろしいですか？")) return;
     try {
-      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
-      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件→取込${r.synced}名（新規${r.created}/更新${r.updated}）・除外${r.excludedCount}名（CRM事業部・管理本部）`;
+      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）`;
       // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
       if (r.fetched > 0 && r.parsed === 0) {
         msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;
@@ -117,7 +117,7 @@ export function MemberMaster() {
         <button onClick={syncJinjer} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
           jinjer（勤怠）から同期
         </button>
-        <span className="text-xs text-ink-muted">CRM事業部・管理本部を除く全員を取込。給与は既存を保持。</span>
+        <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
       </div>
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
