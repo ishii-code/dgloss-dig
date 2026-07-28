@@ -116,6 +116,9 @@ function pick(o: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+// Member.position の Prisma enum（Position）に一致する値のみ許可。
+const VALID_POSITIONS = new Set(["部長", "マネージャー", "リーダー", "メンバー"]);
+
 function asObj(v: unknown): Record<string, unknown> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
@@ -158,8 +161,10 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
 
   // 事業部/部署はこのAPIに無いため空（将来 組織API 等で補完）。
   const division = pick(o, "group_name", "department_name", "busho", "division", "事業部");
-  // 役職も無いため雇用区分を暫定表示。
-  const position = pick(company, "position_name") || empRaw || "メンバー";
+  // 役職(Position enum: 部長/マネージャー/リーダー/メンバー)。jinjer に役職が無いので、
+  // 既知値のときのみ採用し、それ以外（雇用区分など）は既定「メンバー」にする。
+  const posRaw = pick(company, "position_name", "position");
+  const position = VALID_POSITIONS.has(posRaw) ? posRaw : "メンバー";
 
   return { personId, name, division, position, employmentType, joinedOn, status };
 }
