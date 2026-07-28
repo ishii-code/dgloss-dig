@@ -97,6 +97,17 @@ export function MemberMaster() {
     }
   }
 
+  // jinjer の組織/部署エンドポイントを探索（部署ソース特定用の診断）。
+  async function probeOrg() {
+    setMsg("jinjer組織APIを調査中…");
+    try {
+      const r = await apiSend<unknown>("/api/members/jinjer-groups-probe", "POST", {});
+      setMsg("【組織API調査】\n" + JSON.stringify(r, null, 2));
+    } catch (e) {
+      setMsg(`組織API調査失敗: ${(e as Error).message}`);
+    }
+  }
+
   async function del(personId: string) {
     if (!confirm(`${personId} を削除しますか？`)) return;
     try {
@@ -113,9 +124,12 @@ export function MemberMaster() {
   return (
     <>
       <SectionHeader title="従業員マスタ" note="jinjer（勤怠）から自動連携。Person ID は社員番号で突合。" />
-      <div className="mb-3 flex items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <button onClick={syncJinjer} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
           jinjer（勤怠）から同期
+        </button>
+        <button onClick={probeOrg} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted">
+          jinjer組織API調査
         </button>
         <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
       </div>

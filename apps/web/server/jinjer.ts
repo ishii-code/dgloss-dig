@@ -221,3 +221,75 @@ export async function fetchEmployeesForSync(): Promise<{
     rawSample,
   };
 }
+
+// ── 組織/部署API 調査（診断） ─────────────────────────
+// jinjer の部署(事業部)取得エンドポイントとレスポンス構造が不明なため、
+// 候補エンドポイントを順に叩いて、どれが有効か・構造はどうかを可視化する。
+function truncate(v: unknown, n = 600): unknown {
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  return s && s.length > n ? s.slice(0, n) + "…" : v;
+}
+
+const GROUP_ENDPOINT_CANDIDATES = [
+  "/v1/groups",
+  "/v1/group",
+  "/v1/organizations",
+  "/v1/organization",
+  "/v1/departments",
+  "/v1/department",
+  "/v1/sections",
+  "/v1/section",
+  "/v1/belong_groups",
+  "/v1/employee_groups",
+  "/v1/organization_groups",
+];
+
+export async function probeJinjerOrg(): Promise<{
+  connected: boolean;
+  groups: Array<{ path: string; status: number; ok: boolean; count: number; keys: string[]; sample: unknown }>;
+  employeeDetail: { path: string; status: number; keys: string[]; sample: unknown } | null;
+}> {
+  if (!jinjerConnected) return { connected: false, groups: [], employeeDetail: null };
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
+  const groups: Array<{ path: string; status: number; ok: boolean; count: number; keys: string[]; sample: unknown }> = [];
+  for (const p of GROUP_ENDPOINT_CANDIDATES) {
+    try {
+      const res = await fetch(`${JINJER_BASE}${p}`, { method: "GET", headers });
+      const text = await res.text();
+      let body: unknown = null;
+      try { body = JSON.parse(text); } catch { body = text.slice(0, 200); }
+      const list = extractList(body);
+      const first = list[0] ?? (Array.isArray(body) ? undefined : body);
+      const keys = first && typeof first === "object" ? Object.keys(first as Record<string, unknown>) : [];
+      groups.push({ path: p, status: res.status, ok: res.ok, count: list.length, keys, sample: truncate(first ?? body) });
+    } catch (e) {
+      groups.push({ path: p, status: 0, ok: false, count: 0, keys: [], sample: String(e).slice(0, 120) });
+    }
+  }
+
+  // 従業員の詳細(GET /v1/employees/{id})に部署が含まれるかも確認。
+  let employeeDetail: { path: string; status: number; keys: string[]; sample: unknown } | null = null;
+  try {
+    const listRes = await fetch(`${JINJER_BASE}/v1/employees?page=1`, { method: "GET", headers });
+    if (listRes.ok) {
+      const first = extractList(await listRes.json())[0] as Record<string, unknown> | undefined;
+      const id = first ? String(first["id"] ?? "") : "";
+      if (id) {
+        const dpath = `/v1/employees/${id}`;
+        const dres = await fetch(`${JINJER_BASE}${dpath}`, { method: "GET", headers });
+        const dtext = await dres.text();
+        let dbody: unknown = null;
+        try { dbody = JSON.parse(dtext); } catch { dbody = dtext.slice(0, 200); }
+        const rec = extractList(dbody)[0] ?? (Array.isArray(dbody) ? undefined : (dbody as Record<string, unknown>)?.["data"] ?? dbody);
+        const keys = rec && typeof rec === "object" ? Object.keys(rec as Record<string, unknown>) : [];
+        employeeDetail = { path: dpath, status: dres.status, keys, sample: truncate(rec) };
+      }
+    }
+  } catch {
+    /* 詳細取得失敗は無視 */
+  }
+
+  return { connected: jinjerConnected, groups, employeeDetail };
+}
