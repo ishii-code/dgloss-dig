@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/ishii-code/dgloss-dig/compare/v1.4.0...v1.5.0) (2026-07-28)
+
+
+### Features
+
+* **jinjer:** 組織API調査に給与系エンドポイント候補を追加 ([#38](https://github.com/ishii-code/dgloss-dig/issues/38)) ([ddb403f](https://github.com/ishii-code/dgloss-dig/commit/ddb403fe68e755af6e60bed3e0ff0e0f5b126b26))
+
 # [1.4.0](https://github.com/ishii-code/dgloss-dig/compare/v1.3.0...v1.4.0) (2026-07-28)
 
 
