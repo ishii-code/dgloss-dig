@@ -1,3 +1,10 @@
+## [1.2.2](https://github.com/ishii-code/dgloss-dig/compare/v1.2.1...v1.2.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **jinjer:** position を Position enum 準拠に（役員等の無効値を回避） ([#35](https://github.com/ishii-code/dgloss-dig/issues/35)) ([d866a5b](https://github.com/ishii-code/dgloss-dig/commit/d866a5b3aaa6f92f9e693a92f2dcda9ebaa12c49))
+
 ## [1.2.1](https://github.com/ishii-code/dgloss-dig/compare/v1.2.0...v1.2.1) (2026-07-28)
 
 
