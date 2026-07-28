@@ -230,66 +230,86 @@ function truncate(v: unknown, n = 600): unknown {
   return s && s.length > n ? s.slice(0, n) + "…" : v;
 }
 
-const GROUP_ENDPOINT_CANDIDATES = [
-  "/v1/groups",
-  "/v1/group",
-  "/v1/organizations",
-  "/v1/organization",
-  "/v1/departments",
-  "/v1/department",
-  "/v1/sections",
-  "/v1/section",
-  "/v1/belong_groups",
-  "/v1/employee_groups",
-  "/v1/organization_groups",
-];
+interface ProbeResult {
+  path: string;
+  status: number;
+  ok: boolean;
+  count: number;
+  keys: string[];
+  sample: unknown;
+}
+
+async function probePath(
+  path: string,
+  headers: Record<string, string>,
+): Promise<ProbeResult> {
+  try {
+    const res = await fetch(`${JINJER_BASE}${path}`, { method: "GET", headers });
+    const text = await res.text();
+    let body: unknown = null;
+    try { body = JSON.parse(text); } catch { body = text.slice(0, 200); }
+    const list = extractList(body);
+    const first = list[0] ?? (Array.isArray(body) ? undefined : body);
+    const keys = first && typeof first === "object" ? Object.keys(first as Record<string, unknown>) : [];
+    return { path, status: res.status, ok: res.ok, count: list.length, keys, sample: truncate(first ?? body) };
+  } catch (e) {
+    return { path, status: 0, ok: false, count: 0, keys: [], sample: String(e).slice(0, 120) };
+  }
+}
 
 export async function probeJinjerOrg(): Promise<{
   connected: boolean;
-  groups: Array<{ path: string; status: number; ok: boolean; count: number; keys: string[]; sample: unknown }>;
-  employeeDetail: { path: string; status: number; keys: string[]; sample: unknown } | null;
+  results: ProbeResult[];
 }> {
-  if (!jinjerConnected) return { connected: false, groups: [], employeeDetail: null };
+  if (!jinjerConnected) return { connected: false, results: [] };
   const token = await getToken();
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 
-  const groups: Array<{ path: string; status: number; ok: boolean; count: number; keys: string[]; sample: unknown }> = [];
-  for (const p of GROUP_ENDPOINT_CANDIDATES) {
-    try {
-      const res = await fetch(`${JINJER_BASE}${p}`, { method: "GET", headers });
-      const text = await res.text();
-      let body: unknown = null;
-      try { body = JSON.parse(text); } catch { body = text.slice(0, 200); }
-      const list = extractList(body);
-      const first = list[0] ?? (Array.isArray(body) ? undefined : body);
-      const keys = first && typeof first === "object" ? Object.keys(first as Record<string, unknown>) : [];
-      groups.push({ path: p, status: res.status, ok: res.ok, count: list.length, keys, sample: truncate(first ?? body) });
-    } catch (e) {
-      groups.push({ path: p, status: 0, ok: false, count: 0, keys: [], sample: String(e).slice(0, 120) });
-    }
-  }
+  // 社員↔部署の所属マッピングを探す候補（部署一覧 /v1/departments は判明済み）。
+  const staticCandidates = [
+    "/v1/departments?page=1",
+    "/v1/employee_departments",
+    "/v1/department_employees",
+    "/v1/affiliations",
+    "/v1/affiliation",
+    "/v1/belongs",
+    "/v1/employee_affiliations",
+    "/v1/employees_departments",
+    "/v1/employee_department",
+    "/v1/department_members",
+    "/v1/positions",
+    "/v1/employee_positions",
+    "/v2/employees",
+  ];
+  const results: ProbeResult[] = [];
+  for (const p of staticCandidates) results.push(await probePath(p, headers));
 
-  // 従業員の詳細(GET /v1/employees/{id})に部署が含まれるかも確認。
-  let employeeDetail: { path: string; status: number; keys: string[]; sample: unknown } | null = null;
+  // 部署詳細と部署メンバー（先頭部署IDを使う）。
   try {
-    const listRes = await fetch(`${JINJER_BASE}/v1/employees?page=1`, { method: "GET", headers });
-    if (listRes.ok) {
-      const first = extractList(await listRes.json())[0] as Record<string, unknown> | undefined;
-      const id = first ? String(first["id"] ?? "") : "";
-      if (id) {
-        const dpath = `/v1/employees/${id}`;
-        const dres = await fetch(`${JINJER_BASE}${dpath}`, { method: "GET", headers });
-        const dtext = await dres.text();
-        let dbody: unknown = null;
-        try { dbody = JSON.parse(dtext); } catch { dbody = dtext.slice(0, 200); }
-        const rec = extractList(dbody)[0] ?? (Array.isArray(dbody) ? undefined : (dbody as Record<string, unknown>)?.["data"] ?? dbody);
-        const keys = rec && typeof rec === "object" ? Object.keys(rec as Record<string, unknown>) : [];
-        employeeDetail = { path: dpath, status: dres.status, keys, sample: truncate(rec) };
+    const deps = await fetch(`${JINJER_BASE}/v1/departments?page=1`, { method: "GET", headers });
+    if (deps.ok) {
+      const firstDep = extractList(await deps.json())[0] as Record<string, unknown> | undefined;
+      const depId = firstDep ? String(firstDep["id"] ?? "") : "";
+      if (depId) {
+        results.push(await probePath(`/v1/departments/${depId}`, headers));
+        results.push(await probePath(`/v1/departments/${depId}/employees`, headers));
+        results.push(await probePath(`/v1/departments/${depId}/members`, headers));
       }
     }
-  } catch {
-    /* 詳細取得失敗は無視 */
-  }
+  } catch { /* 無視 */ }
 
-  return { connected: jinjerConnected, groups, employeeDetail };
+  // 従業員に紐づく所属（先頭社員IDを使う）。
+  try {
+    const emps = await fetch(`${JINJER_BASE}/v1/employees?page=1`, { method: "GET", headers });
+    if (emps.ok) {
+      const firstEmp = extractList(await emps.json())[0] as Record<string, unknown> | undefined;
+      const empId = firstEmp ? String(firstEmp["id"] ?? "") : "";
+      if (empId) {
+        results.push(await probePath(`/v1/employees/${empId}/departments`, headers));
+        results.push(await probePath(`/v1/employees/${empId}/affiliations`, headers));
+      }
+    }
+  } catch { /* 無視 */ }
+
+  return { connected: jinjerConnected, results };
 }
