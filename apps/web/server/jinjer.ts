@@ -23,12 +23,13 @@ export const EXCLUDED_DIVISIONS = ["CRM事業部", "管理本部"];
 
 /** dgloss 従業員マスタ向けに正規化した形 */
 export interface NormalizedEmployee {
-  personId: string; // 社員番号
+  personId: string; // 社員番号（jinjer では top-level id）
   name: string;
-  division: string; // 事業部/部署
+  division: string; // 事業部/部署（jinjer 従業員APIには無いため通常空）
   position: string; // 役職
   employmentType: "正社員" | "アルバイト";
   joinedOn: string; // YYYY-MM-DD
+  status: string; // 在籍状況（在籍/退職 等）
 }
 
 // ── 実API ─────────────────────────────
@@ -115,22 +116,52 @@ function pick(o: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+function asObj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+/** jinjer の区分オブジェクト {id, name} から name を取り出す。 */
+function className(v: unknown): string {
+  return pick(asObj(v), "name");
+}
+
+/**
+ * jinjer 人事労務の従業員レコードを正規化。
+ * 実構造: { id, company:{ last_name, first_name, joined_on,
+ *   employment_classification:{name}, enrollment_classification:{name}, ... },
+ *   personal:{...}, ... }。旧フラット形（サンプル）にもフォールバック。
+ * 事業部/部署・給与はこのレコードに含まれない（別リソース）。
+ */
 function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
-  const personId = pick(o, "employee_code", "emp_code", "code", "staff_code");
+  const company = asObj(o["company"]);
+  const personal = asObj(o["personal"]);
+  const personId = pick(o, "id", "employee_code", "emp_code", "code", "staff_code");
   if (!personId) return null;
-  const name =
-    pick(o, "full_name", "name") ||
-    `${pick(o, "last_name", "family_name")}${pick(o, "first_name", "given_name")}`.trim();
-  const division = pick(o, "group_name", "department_name", "busho", "division", "事業部");
-  const position = pick(o, "position_name", "position", "役職");
-  const empRaw = pick(o, "employment_type", "employment_status", "雇用形態");
+
+  const last = pick(company, "last_name") || pick(personal, "last_name") || pick(o, "last_name", "family_name");
+  const first = pick(company, "first_name") || pick(personal, "first_name") || pick(o, "first_name", "given_name");
+  const name = `${last}${first}`.trim() || pick(o, "full_name", "name") || personId;
+
+  const empRaw =
+    className(company["employment_classification"]) ||
+    pick(o, "employment_type", "employment_status", "雇用形態");
   const employmentType: "正社員" | "アルバイト" =
     empRaw.includes("アルバイト") || empRaw.includes("パート") || empRaw.toLowerCase().includes("part")
       ? "アルバイト"
       : "正社員";
-  const joinedRaw = pick(o, "enter_date", "hire_date", "join_date", "入社日");
+
+  const joinedRaw = pick(company, "joined_on") || pick(o, "enter_date", "hire_date", "join_date", "入社日");
   const joinedOn = joinedRaw ? joinedRaw.slice(0, 10) : "2020-01-01";
-  return { personId, name: name || personId, division, position: position || "メンバー", employmentType, joinedOn };
+
+  // 在籍状況（在籍/退職）。取込は在籍のみ対象。
+  const status = className(company["enrollment_classification"]) || pick(o, "status") || "在籍";
+
+  // 事業部/部署はこのAPIに無いため空（将来 組織API 等で補完）。
+  const division = pick(o, "group_name", "department_name", "busho", "division", "事業部");
+  // 役職も無いため雇用区分を暫定表示。
+  const position = pick(company, "position_name") || empRaw || "メンバー";
+
+  return { personId, name, division, position, employmentType, joinedOn, status };
 }
 
 // ── サンプル（jinjer形・未接続時の検証用。CRM事業部/管理本部を含めて除外を確認）──
@@ -145,9 +176,15 @@ const SAMPLE_RAW: Record<string, unknown>[] = [
   { employee_code: "C0000008", last_name: "渡部", first_name: "あすか", group_name: "管理本部", position_name: "マネージャー", employment_type: "正社員", enter_date: "2024-06-01" },
 ];
 
+/** 在籍とみなす在籍状況（退職・休職等を除外）。 */
+function isActive(status: string): boolean {
+  return status.includes("在籍");
+}
+
 /**
- * jinjerから従業員を取得し、CRM事業部・管理本部を除外して正規化。
- * 未接続時はサンプルで動作。
+ * jinjerから従業員を取得して正規化し、在籍者のみを対象にする。
+ * 事業部/部署が取れる場合は CRM事業部・管理本部 を除外（現状 jinjer 従業員API
+ * には部署が無いため通常は全在籍者が対象）。未接続時はサンプルで動作。
  */
 export async function fetchEmployeesForSync(): Promise<{
   employees: NormalizedEmployee[];
@@ -155,13 +192,16 @@ export async function fetchEmployeesForSync(): Promise<{
   connected: boolean;
   fetched: number; // jinjerから取得した生レコード数（診断用）
   parsed: number; // 社員番号が取れて正規化できた数
+  activeCount: number; // 在籍者数
+  retiredCount: number; // 在籍以外（退職等）の数
   rawSampleKeys: string[]; // 先頭レコードの項目名（マッピング診断用）
   rawSample: Record<string, unknown> | null; // 先頭レコードそのもの（マッピング診断用）
 }> {
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
-  const employees = all.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
-  const excluded = all.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
+  const active = all.filter((e) => isActive(e.status));
+  const employees = active.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
+  const excluded = active.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
   const rawSample = raw[0] ?? null;
   const rawSampleKeys = rawSample ? Object.keys(rawSample) : [];
   return {
@@ -170,6 +210,8 @@ export async function fetchEmployeesForSync(): Promise<{
     connected: jinjerConnected,
     fetched: raw.length,
     parsed: all.length,
+    activeCount: active.length,
+    retiredCount: all.length - active.length,
     rawSampleKeys,
     rawSample,
   };

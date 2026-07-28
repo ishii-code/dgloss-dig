@@ -942,8 +942,17 @@ import { EXCLUDED_DIVISIONS, fetchEmployeesForSync } from "./jinjer";
 
 /** jinjerから従業員を取り込み Member へ upsert（CRM事業部・管理本部は除外）。給与は既存を保持。 */
 export async function syncFromJinjer(actor: string) {
-  const { employees, excluded, connected, fetched, parsed, rawSampleKeys, rawSample } =
-    await fetchEmployeesForSync();
+  const {
+    employees,
+    excluded,
+    connected,
+    fetched,
+    parsed,
+    activeCount,
+    retiredCount,
+    rawSampleKeys,
+    rawSample,
+  } = await fetchEmployeesForSync();
   let created = 0;
   let updated = 0;
   for (const e of employees) {
@@ -994,6 +1003,8 @@ export async function syncFromJinjer(actor: string) {
     connected,
     fetched,
     parsed,
+    activeCount,
+    retiredCount,
     created,
     updated,
     synced: employees.length,
