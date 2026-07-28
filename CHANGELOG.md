@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/ishii-code/dgloss-dig/compare/v1.2.2...v1.3.0) (2026-07-28)
+
+
+### Features
+
+* **jinjer:** 組織/部署APIの探索診断を追加（部署ソース特定用） ([#36](https://github.com/ishii-code/dgloss-dig/issues/36)) ([db13644](https://github.com/ishii-code/dgloss-dig/commit/db136443fee16779b030997170cf9a234109abff))
+
 ## [1.2.2](https://github.com/ishii-code/dgloss-dig/compare/v1.2.1...v1.2.2) (2026-07-28)
 
 
