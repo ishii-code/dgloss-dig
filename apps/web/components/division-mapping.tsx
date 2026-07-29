@@ -16,7 +16,7 @@ interface TeamRow {
   team: string; // jinjer の末端所属名
   division: string; // 現在の dgloss 事業部
   count: number;
-  members: Array<{ personId: string; name: string }>;
+  members: Array<{ personId: string; name: string; division: string; overridden: boolean }>;
 }
 
 /**
@@ -35,6 +35,27 @@ export function DivisionMapping() {
   const [rowInput, setRowInput] = useState<Record<string, string>>({});
   // 人数クリックで所属メンバーの氏名を開閉する。
   const [openTeam, setOpenTeam] = useState<string | null>(null);
+  // メンバー個別の事業部入力（同一所属でも人により事業部が異なる場合に使う）。
+  const [memberInput, setMemberInput] = useState<Record<string, string>>({});
+
+  // メンバー個別に事業部を指定（空で解除）。
+  async function saveMemberDivision(personId: string, division: string) {
+    setBusy(true);
+    try {
+      await apiSend(`/api/members/${personId}/division`, "POST", { division, actor: ACTOR });
+      setMsg(division ? `${personId} を「${division}」に設定しました` : `${personId} の個別指定を解除しました`);
+      setMemberInput((prev) => {
+        const next = { ...prev };
+        delete next[personId];
+        return next;
+      });
+      await load();
+    } catch (e) {
+      setMsg(`個別設定に失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -256,15 +277,49 @@ export function DivisionMapping() {
               {openTeam === t.team && (
                 <tr className="border-b border-surface-border bg-surface-panel">
                   <td colSpan={4} className="px-3 py-2">
-                    <div className="mb-1 text-xs font-semibold text-ink-muted">
-                      {t.team} の在籍メンバー（{t.count}名）
+                    <div className="mb-2 text-xs font-semibold text-ink-muted">
+                      {t.team} の在籍メンバー（{t.count}名）／個人ごとに事業部を指定できます（同期しても保持されます）
                     </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                    <div className="space-y-1">
                       {t.members.map((m) => (
-                        <span key={m.personId} className="text-ink">
-                          {m.name}
-                          <span className="ml-1 text-[11px] text-ink-faint">{m.personId}</span>
-                        </span>
+                        <div key={m.personId} className="flex flex-wrap items-center gap-2 text-sm">
+                          <span className="min-w-[150px] text-ink">
+                            {m.name}
+                            <span className="ml-1 text-[11px] text-ink-faint">{m.personId}</span>
+                          </span>
+                          <span className="min-w-[140px] text-xs text-ink-muted">
+                            {m.division || "—"}
+                            {m.overridden && <span className="ml-1 text-brand-accent">（個別指定）</span>}
+                          </span>
+                          <input
+                            value={memberInput[m.personId] ?? ""}
+                            onChange={(e) => setMemberInput({ ...memberInput, [m.personId]: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && (memberInput[m.personId] ?? "").trim()) {
+                                void saveMemberDivision(m.personId, (memberInput[m.personId] ?? "").trim());
+                              }
+                            }}
+                            placeholder="この人の事業部"
+                            list="division-candidates"
+                            className="min-w-[170px] rounded-card border border-surface-border px-2 py-1 text-xs"
+                          />
+                          <button
+                            onClick={() => void saveMemberDivision(m.personId, (memberInput[m.personId] ?? "").trim())}
+                            disabled={busy || !(memberInput[m.personId] ?? "").trim()}
+                            className="rounded-card bg-brand-accent px-2.5 py-1 text-xs font-bold text-white disabled:opacity-40"
+                          >
+                            設定
+                          </button>
+                          {m.overridden && (
+                            <button
+                              onClick={() => void saveMemberDivision(m.personId, "")}
+                              disabled={busy}
+                              className="text-xs text-ink-muted underline"
+                            >
+                              解除
+                            </button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </td>
