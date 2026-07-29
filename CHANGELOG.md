@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/ishii-code/dgloss-dig/compare/v1.7.1...v1.8.0) (2026-07-29)
+
+
+### Features
+
+* **masters:** jinjer同期中のローディング表示とボタン無効化 ([#42](https://github.com/ishii-code/dgloss-dig/issues/42)) ([2410ee0](https://github.com/ishii-code/dgloss-dig/commit/2410ee0566d03f2833d944a38d97bb4bf54f4414))
+
 ## [1.7.1](https://github.com/ishii-code/dgloss-dig/compare/v1.7.0...v1.7.1) (2026-07-29)
 
 
