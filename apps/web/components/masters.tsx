@@ -79,12 +79,17 @@ export function MemberMaster() {
   async function syncJinjer() {
     if (!confirm("jinjer から在籍の従業員マスタを同期します（退職者は除外。事業部/部署・給与は jinjer 従業員APIに含まれないため未設定）。よろしいですか？")) return;
     try {
-      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
       let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）`;
+      // 部署別人数（AIテレアポの正確な部署名を確認するため）。
+      if (r.departmentCounts) {
+        const rows = Object.entries(r.departmentCounts).sort((a, b) => b[1] - a[1]);
+        msg += `\n【部署別 在籍人数】\n` + rows.map(([d, n]) => `・${d}: ${n}名`).join("\n");
+      }
       // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
       if (r.fetched > 0 && r.parsed === 0) {
         msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;

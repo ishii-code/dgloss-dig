@@ -25,11 +25,12 @@ export const EXCLUDED_DIVISIONS = ["CRM事業部", "管理本部"];
 export interface NormalizedEmployee {
   personId: string; // 社員番号（jinjer では top-level id）
   name: string;
-  division: string; // 事業部/部署（jinjer 従業員APIには無いため通常空）
+  division: string; // 事業部/部署（/v1/employees/affiliations の主務 department 名）
   position: string; // 役職
   employmentType: "正社員" | "アルバイト";
   joinedOn: string; // YYYY-MM-DD
   status: string; // 在籍状況（在籍/退職 等）
+  basePay: number; // 基本給(月給)（/v1/employees/salaries の salary_units より）
 }
 
 // ── 実API ─────────────────────────────
@@ -166,7 +167,8 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
   const posRaw = pick(company, "position_name", "position");
   const position = VALID_POSITIONS.has(posRaw) ? posRaw : "メンバー";
 
-  return { personId, name, division, position, employmentType, joinedOn, status };
+  // division/basePay は別エンドポイント（affiliations/salaries）で後から補完する。
+  return { personId, name, division, position, employmentType, joinedOn, status, basePay: 0 };
 }
 
 // ── サンプル（jinjer形・未接続時の検証用。CRM事業部/管理本部を含めて除外を確認）──
@@ -186,10 +188,70 @@ function isActive(status: string): boolean {
   return status.includes("在籍");
 }
 
+/** /v1/employees/xxx 系の全ページ取得（page のみ・重複排除で終端）。 */
+async function fetchPaged(path: string, headers: Record<string, string>): Promise<Record<string, unknown>[]> {
+  const seen = new Set<string>();
+  const all: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 100; page++) {
+    const res = await fetch(`${JINJER_BASE}${path}?page=${page}`, { method: "GET", headers });
+    if (!res.ok) {
+      if (page === 1) throw new Error(`jinjer ${path} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      break;
+    }
+    const list = extractList(await res.json());
+    if (list.length === 0) break;
+    let added = 0;
+    for (const it of list) {
+      const key = String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it));
+      if (!seen.has(key)) { seen.add(key); all.push(it); added += 1; }
+    }
+    if (added === 0) break;
+  }
+  return all;
+}
+
+/** 社員番号 → 主務の所属部署名。/v1/employees/affiliations より。 */
+async function fetchAffiliationMap(headers: Record<string, string>): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const rows = await fetchPaged("/v1/employees/affiliations", headers);
+  for (const r of rows) {
+    const empId = pick(r, "employee_id", "id");
+    const affs = Array.isArray(r["affiliations"]) ? (r["affiliations"] as Record<string, unknown>[]) : [];
+    // 主務＝先頭の所属。department:{id,name}。
+    const dept = asObj(affs[0]?.["department"]);
+    const name = pick(dept, "name");
+    if (empId && name && name !== "未選択") map.set(empId, name);
+  }
+  return map;
+}
+
+/** 社員番号 → 基本給(月給)。/v1/employees/salaries の salary_units より（最新改定）。 */
+async function fetchSalaryMap(headers: Record<string, string>): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const rows = await fetchPaged("/v1/employees/salaries", headers);
+  for (const r of rows) {
+    const empId = pick(r, "employee_id", "id");
+    if (!empId) continue;
+    const sals = Array.isArray(r["salaries"]) ? (r["salaries"] as Record<string, unknown>[]) : [];
+    // 最新の改定（revised_on 降順）を採用。
+    const latest = sals.slice().sort((a, b) => pick(b, "revised_on").localeCompare(pick(a, "revised_on")))[0];
+    const units = latest && Array.isArray(latest["salary_units"]) ? (latest["salary_units"] as Record<string, unknown>[]) : [];
+    const valueOf = (pred: (label: string) => boolean): number => {
+      const u = units.find((x) => pred(pick(x, "label")));
+      return u ? Number(u["value"]) || 0 : 0;
+    };
+    // 基本給(月給) を優先、無ければ 基本給 を含むもの。
+    const basePay = valueOf((l) => l.includes("基本給") && l.includes("月給")) || valueOf((l) => l.includes("基本給"));
+    map.set(empId, basePay);
+  }
+  return map;
+}
+
 /**
  * jinjerから従業員を取得して正規化し、在籍者のみを対象にする。
- * 事業部/部署が取れる場合は CRM事業部・管理本部 を除外（現状 jinjer 従業員API
- * には部署が無いため通常は全在籍者が対象）。未接続時はサンプルで動作。
+ * 部署(division)は /v1/employees/affiliations、基本給(basePay)は
+ * /v1/employees/salaries から補完する。CRM事業部・管理本部は除外。
+ * 未接続時はサンプルで動作。
  */
 export async function fetchEmployeesForSync(): Promise<{
   employees: NormalizedEmployee[];
@@ -199,14 +261,39 @@ export async function fetchEmployeesForSync(): Promise<{
   parsed: number; // 社員番号が取れて正規化できた数
   activeCount: number; // 在籍者数
   retiredCount: number; // 在籍以外（退職等）の数
+  departmentCounts: Record<string, number>; // 在籍者の部署別人数（AIテレアポ名確認用）
   rawSampleKeys: string[]; // 先頭レコードの項目名（マッピング診断用）
   rawSample: Record<string, unknown> | null; // 先頭レコードそのもの（マッピング診断用）
 }> {
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
+
+  // 部署・基本給を補完（接続時のみ実API。失敗しても取込自体は継続）。
+  if (jinjerConnected) {
+    const token = await getToken();
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+    const [affMap, salMap] = await Promise.all([
+      fetchAffiliationMap(headers).catch(() => new Map<string, string>()),
+      fetchSalaryMap(headers).catch(() => new Map<string, number>()),
+    ]);
+    for (const e of all) {
+      const dept = affMap.get(e.personId);
+      if (dept) e.division = dept;
+      const bp = salMap.get(e.personId);
+      if (bp && bp > 0) e.basePay = bp;
+    }
+  }
+
   const active = all.filter((e) => isActive(e.status));
   const employees = active.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
   const excluded = active.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
+
+  const departmentCounts: Record<string, number> = {};
+  for (const e of active) {
+    const key = e.division || "(部署なし)";
+    departmentCounts[key] = (departmentCounts[key] ?? 0) + 1;
+  }
+
   const rawSample = raw[0] ?? null;
   const rawSampleKeys = rawSample ? Object.keys(rawSample) : [];
   return {
@@ -217,6 +304,7 @@ export async function fetchEmployeesForSync(): Promise<{
     parsed: all.length,
     activeCount: active.length,
     retiredCount: all.length - active.length,
+    departmentCounts,
     rawSampleKeys,
     rawSample,
   };

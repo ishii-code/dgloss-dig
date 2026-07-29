@@ -950,6 +950,7 @@ export async function syncFromJinjer(actor: string) {
     parsed,
     activeCount,
     retiredCount,
+    departmentCounts,
     rawSampleKeys,
     rawSample,
   } = await fetchEmployeesForSync();
@@ -959,7 +960,7 @@ export async function syncFromJinjer(actor: string) {
     const existing = await prisma.member.findUnique({ where: { personId: e.personId } });
     const joinedOn = new Date(`${e.joinedOn}T00:00:00Z`);
     if (existing) {
-      // 給与(basePay/positionBase)・職種・サイクルは既存を保持し、勤怠由来の項目のみ更新
+      // 勤怠/所属由来の項目を更新。基本給は jinjer から取れた場合のみ反映（0は既存維持）。
       await prisma.member.update({
         where: { personId: e.personId },
         data: {
@@ -969,6 +970,7 @@ export async function syncFromJinjer(actor: string) {
           employmentType: e.employmentType as Prisma.MemberUpdateInput["employmentType"],
           joinedOn,
           status: "在籍",
+          ...(e.basePay > 0 ? { basePay: e.basePay } : {}),
         },
       });
       updated += 1;
@@ -981,7 +983,7 @@ export async function syncFromJinjer(actor: string) {
           position: e.position as Prisma.MemberCreateInput["position"],
           jobType: null,
           employmentType: e.employmentType as Prisma.MemberCreateInput["employmentType"],
-          basePay: 0,
+          basePay: e.basePay,
           positionBase: 0,
           joinedOn,
           evaluationCycle: "四半期",
@@ -1005,6 +1007,7 @@ export async function syncFromJinjer(actor: string) {
     parsed,
     activeCount,
     retiredCount,
+    departmentCounts,
     created,
     updated,
     synced: employees.length,
