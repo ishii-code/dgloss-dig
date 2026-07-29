@@ -144,14 +144,19 @@ export function MemberMaster() {
     }
   }
 
-  // jinjer の組織/部署エンドポイントを探索（部署ソース特定用の診断）。
+  // 部署ツリーの正規化プレビュー（末端所属 → 事業部 の対応確認）。
   async function probeOrg() {
-    setMsg("jinjer組織APIを調査中…");
+    setMsg("⏳ 部署ツリーを確認中…");
     try {
-      const r = await apiSend<unknown>("/api/members/jinjer-groups-probe", "POST", {});
-      setMsg("【組織API調査】\n" + JSON.stringify(r, null, 2));
+      const r = await apiSend<{ treeSize: number; sample: Array<{ personId: string; team: string; division: string }> }>(
+        "/api/members/jinjer-groups-probe",
+        "POST",
+        {},
+      );
+      const lines = r.sample.map((s) => `・${s.team} → ${s.division}`);
+      setMsg(`【部署ツリー正規化プレビュー】部署マスタ${r.treeSize}件\n（jinjerの末端所属 → 事業部）\n` + lines.join("\n"));
     } catch (e) {
-      setMsg(`組織API調査失敗: ${(e as Error).message}`);
+      setMsg(`部署ツリー確認失敗: ${(e as Error).message}`);
     }
   }
 
@@ -179,7 +184,7 @@ export function MemberMaster() {
           {syncing ? "⏳ 処理中…" : "② 部署・給与を反映"}
         </button>
         <button onClick={probeOrg} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
-          jinjer組織API調査
+          部署ツリー確認
         </button>
         <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
       </div>

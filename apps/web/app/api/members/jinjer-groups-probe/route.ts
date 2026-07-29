@@ -1,8 +1,9 @@
 import { handle, ok } from "@/server/http";
-import { probeJinjerOrg } from "@/server/jinjer";
+import { previewDivisionMapping } from "@/server/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-// jinjer の組織/部署エンドポイントを探索する診断（部署ソース特定用）。
-export const POST = () => handle(async () => ok(await probeJinjerOrg()));
+// 部署ツリーの正規化プレビュー（末端所属 → 事業部 の対応を確認する診断）。
+export const POST = () => handle(async () => ok(await previewDivisionMapping()));
