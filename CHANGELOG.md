@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/ishii-code/dgloss-dig/compare/v1.8.3...v1.9.0) (2026-07-29)
+
+
+### Features
+
+* **jinjer:** 部署ツリーを辿り所属を「事業部」レベルへ正規化 ([#46](https://github.com/ishii-code/dgloss-dig/issues/46)) ([85c2599](https://github.com/ishii-code/dgloss-dig/commit/85c2599fb49451fa69d7a59dfb4e8ea5b4877325))
+
 ## [1.8.3](https://github.com/ishii-code/dgloss-dig/compare/v1.8.2...v1.8.3) (2026-07-29)
 
 
