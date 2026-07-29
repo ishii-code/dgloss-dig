@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/ishii-code/dgloss-dig/compare/v1.8.0...v1.8.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **jinjer:** 同期タイムアウトを防止＋クライアントを非JSON応答に耐性化 ([#43](https://github.com/ishii-code/dgloss-dig/issues/43)) ([45f08d3](https://github.com/ishii-code/dgloss-dig/commit/45f08d38896c2740d81c80ef92cf4caeec3bd179))
+
 # [1.8.0](https://github.com/ishii-code/dgloss-dig/compare/v1.7.1...v1.8.0) (2026-07-29)
 
 
