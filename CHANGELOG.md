@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/ishii-code/dgloss-dig/compare/v1.7.0...v1.7.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **jinjer:** 非JSON応答に耐性（リトライ）＋取得を順次化 ([#41](https://github.com/ishii-code/dgloss-dig/issues/41)) ([be00ceb](https://github.com/ishii-code/dgloss-dig/commit/be00ceb7db691db8d8ce1ff444fbe3e4ba85b121))
+
 # [1.7.0](https://github.com/ishii-code/dgloss-dig/compare/v1.6.0...v1.7.0) (2026-07-29)
 
 
