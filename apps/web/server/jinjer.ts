@@ -34,7 +34,17 @@ export interface NormalizedEmployee {
 }
 
 // ── 実API ─────────────────────────────
+// トークンは4h有効。呼び出しごとの再取得を避けるためプロセス内でキャッシュする。
+let tokenCache: { token: string; expiresAt: number } | null = null;
+
 async function getToken(): Promise<string> {
+  if (tokenCache && tokenCache.expiresAt > Date.now()) return tokenCache.token;
+  const token = await requestToken();
+  tokenCache = { token, expiresAt: Date.now() + 3 * 60 * 60 * 1000 }; // 3h（4h有効の余裕）
+  return token;
+}
+
+async function requestToken(): Promise<string> {
   const res = await fetch(`${JINJER_BASE}/v2/token`, {
     method: "GET",
     headers: {
@@ -231,56 +241,88 @@ async function fetchPaged(path: string, headers: Record<string, string>): Promis
   return fetchPagedList(path, headers, (it) => String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it)), 1);
 }
 
-/** 社員番号 → 主務の所属部署名。/v1/employees/affiliations より。 */
-async function fetchAffiliationMap(headers: Record<string, string>): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const rows = await fetchPaged("/v1/employees/affiliations", headers);
-  for (const r of rows) {
-    const empId = pick(r, "employee_id", "id");
-    const affs = Array.isArray(r["affiliations"]) ? (r["affiliations"] as Record<string, unknown>[]) : [];
-    // 主務＝先頭の所属。department:{id,name}。
-    const dept = asObj(affs[0]?.["department"]);
-    const name = pick(dept, "name");
-    if (empId && name && name !== "未選択") map.set(empId, name);
-  }
-  return map;
+/** 所属レコード1件 → 主務の所属部署名（未選択は空）。 */
+function parseAffiliation(r: Record<string, unknown>): string {
+  const affs = Array.isArray(r["affiliations"]) ? (r["affiliations"] as Record<string, unknown>[]) : [];
+  // 主務＝先頭の所属。department:{id,name}。
+  const name = pick(asObj(affs[0]?.["department"]), "name");
+  return name && name !== "未選択" ? name : "";
 }
 
-/** 社員番号 → 基本給(月給)。/v1/employees/salaries の salary_units より（最新改定）。 */
-async function fetchSalaryMap(headers: Record<string, string>): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  const rows = await fetchPaged("/v1/employees/salaries", headers);
-  for (const r of rows) {
-    const empId = pick(r, "employee_id", "id");
-    if (!empId) continue;
-    const sals = Array.isArray(r["salaries"]) ? (r["salaries"] as Record<string, unknown>[]) : [];
-    // 最新の改定（revised_on 降順）を採用。
-    const latest = sals.slice().sort((a, b) => pick(b, "revised_on").localeCompare(pick(a, "revised_on")))[0];
-    const units = latest && Array.isArray(latest["salary_units"]) ? (latest["salary_units"] as Record<string, unknown>[]) : [];
-    const valueOf = (pred: (label: string) => boolean): number => {
-      const u = units.find((x) => pred(pick(x, "label")));
-      return u ? Number(u["value"]) || 0 : 0;
-    };
-    // 基本給(月給) を優先、無ければ 基本給 を含むもの。
-    const basePay = valueOf((l) => l.includes("基本給") && l.includes("月給")) || valueOf((l) => l.includes("基本給"));
-    map.set(empId, basePay);
-  }
-  return map;
+/** 給与レコード1件 → 基本給(月給)（最新改定の salary_units より）。 */
+function parseBasePay(r: Record<string, unknown>): number {
+  const sals = Array.isArray(r["salaries"]) ? (r["salaries"] as Record<string, unknown>[]) : [];
+  // 最新の改定（revised_on 降順）を採用。
+  const latest = sals.slice().sort((a, b) => pick(b, "revised_on").localeCompare(pick(a, "revised_on")))[0];
+  const units = latest && Array.isArray(latest["salary_units"]) ? (latest["salary_units"] as Record<string, unknown>[]) : [];
+  const valueOf = (pred: (label: string) => boolean): number => {
+    const u = units.find((x) => pred(pick(x, "label")));
+    return u ? Number(u["value"]) || 0 : 0;
+  };
+  // 基本給(月給) を優先、無ければ 基本給 を含むもの。
+  return valueOf((l) => l.includes("基本給") && l.includes("月給")) || valueOf((l) => l.includes("基本給"));
+}
+
+export type EnrichKind = "affiliations" | "salaries";
+
+export interface EnrichRow {
+  personId: string;
+  division?: string;
+  basePay?: number;
 }
 
 /**
- * 所属(部署名)と基本給のマップをまとめて取得（別処理の補完用）。
- * 補完は高速フェイル(tries=1)のため、jinがレート制限中なら空マップで返る。
+ * 所属/給与を「1ページだけ」取得して正規化する（タイムアウト回避のため細分化）。
+ * 呼び出し側がページを進めながら繰り返し呼ぶ。
+ */
+export async function fetchEnrichPage(
+  kind: EnrichKind,
+  page: number,
+): Promise<{ ok: boolean; status: number; count: number; rows: EnrichRow[]; error?: string }> {
+  if (!jinjerConnected) return { ok: false, status: 0, count: 0, rows: [], error: "jinjer未接続（APIキー未設定）" };
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const r = await fetchJson(`${JINJER_BASE}/v1/employees/${kind}?page=${page}`, headers, 2);
+  if (!r.ok || r.json === null) {
+    return { ok: false, status: r.status, count: 0, rows: [], error: r.text.slice(0, 200) };
+  }
+  const list = extractList(r.json);
+  const rows: EnrichRow[] = [];
+  for (const it of list) {
+    const personId = pick(it, "employee_id", "id");
+    if (!personId) continue;
+    if (kind === "affiliations") {
+      const division = parseAffiliation(it);
+      if (division) rows.push({ personId, division });
+    } else {
+      const basePay = parseBasePay(it);
+      if (basePay > 0) rows.push({ personId, basePay });
+    }
+  }
+  return { ok: true, status: r.status, count: list.length, rows };
+}
+
+/**
+ * 所属(部署名)と基本給のマップをまとめて取得（一括版・小規模向け）。
+ * 大量件数ではタイムアウトするため、通常は fetchEnrichPage を使う。
  */
 export async function fetchOrgSalaryMaps(): Promise<{
   affMap: Map<string, string>;
   salMap: Map<string, number>;
 }> {
   if (!jinjerConnected) return { affMap: new Map(), salMap: new Map() };
-  const token = await getToken();
-  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-  const affMap = await fetchAffiliationMap(headers).catch(() => new Map<string, string>());
-  const salMap = await fetchSalaryMap(headers).catch(() => new Map<string, number>());
+  const affMap = new Map<string, string>();
+  const salMap = new Map<string, number>();
+  for (let page = 1; page <= 100; page++) {
+    const r = await fetchEnrichPage("affiliations", page).catch(() => null);
+    if (!r || !r.ok || r.count === 0) break;
+    for (const row of r.rows) if (row.division) affMap.set(row.personId, row.division);
+  }
+  for (let page = 1; page <= 100; page++) {
+    const r = await fetchEnrichPage("salaries", page).catch(() => null);
+    if (!r || !r.ok || r.count === 0) break;
+    for (const row of r.rows) if (row.basePay) salMap.set(row.personId, row.basePay);
+  }
   return { affMap, salMap };
 }
 

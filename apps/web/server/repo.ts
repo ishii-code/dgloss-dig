@@ -938,7 +938,13 @@ export async function settleRetirement(input: {
 // ─────────────────────────────────────────────
 // jinjer（勤怠）連携: 従業員マスタ自動同期
 // ─────────────────────────────────────────────
-import { EXCLUDED_DIVISIONS, fetchEmployeesForSync, fetchOrgSalaryMaps } from "./jinjer";
+import {
+  EXCLUDED_DIVISIONS,
+  fetchEmployeesForSync,
+  fetchEnrichPage,
+  fetchOrgSalaryMaps,
+  type EnrichKind,
+} from "./jinjer";
 
 /** jinjerから従業員を取り込み Member へ upsert（CRM事業部・管理本部は除外）。給与は既存を保持。 */
 export async function syncFromJinjer(actor: string) {
@@ -1020,8 +1026,58 @@ export async function syncFromJinjer(actor: string) {
 }
 
 /**
- * 既存の在籍メンバーに jinjer の所属(部署)と基本給を反映する（基本同期とは別処理）。
- * jin がレート制限中なら取れた分だけ反映（0件でも失敗にしない）。冪等・再実行で続行可。
+ * 所属/給与を「1ページ分だけ」取り込んで在籍メンバーへ反映する（タイムアウト回避）。
+ * クライアントが page を進めながら繰り返し呼ぶ。DB更新は自社メンバーのみ（退職者は無視）。
+ */
+export async function enrichMembersPage(
+  actor: string,
+  kind: EnrichKind,
+  page: number,
+): Promise<{ kind: EnrichKind; page: number; fetched: number; updated: number; done: boolean; error?: string }> {
+  const r = await fetchEnrichPage(kind, page);
+  if (!r.ok) {
+    return { kind, page, fetched: 0, updated: 0, done: false, error: r.error ?? `HTTP ${r.status}` };
+  }
+  if (r.count === 0) return { kind, page, fetched: 0, updated: 0, done: true };
+
+  // 自社の在籍メンバーだけを対象に更新（jin側は退職者含む全件のため）。
+  const ids = r.rows.map((x) => x.personId);
+  const targets = await prisma.member.findMany({
+    where: { personId: { in: ids }, status: "在籍" },
+    select: { personId: true },
+  });
+  const targetSet = new Set(targets.map((t) => t.personId));
+
+  let updated = 0;
+  for (const row of r.rows) {
+    if (!targetSet.has(row.personId)) continue;
+    const data: Prisma.MemberUpdateInput = {};
+    if (row.division) data.division = row.division;
+    if (row.basePay && row.basePay > 0) data.basePay = row.basePay;
+    if (Object.keys(data).length === 0) continue;
+    await prisma.member.update({ where: { personId: row.personId }, data });
+    updated += 1;
+  }
+  if (updated > 0) {
+    await audit(actor, `member.enrich.${kind}`, "Member", null, { page, updated });
+  }
+  return { kind, page, fetched: r.count, updated, done: false };
+}
+
+/** 在籍メンバーの部署別人数（反映結果の確認用）。 */
+export async function getDepartmentCounts(): Promise<Record<string, number>> {
+  const members = await prisma.member.findMany({ where: { status: "在籍" }, select: { division: true } });
+  const counts: Record<string, number> = {};
+  for (const m of members) {
+    const key = m.division || "(部署なし)";
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * 既存の在籍メンバーに jinjer の所属(部署)と基本給を反映する（一括版・小規模向け）。
+ * 大量件数ではタイムアウトするため、通常は enrichMembersPage を使う。
  */
 export async function enrichMembersFromJinjer(actor: string) {
   const { affMap, salMap } = await fetchOrgSalaryMaps();
