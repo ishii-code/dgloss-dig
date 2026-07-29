@@ -269,29 +269,20 @@ export async function probeJinjerOrg(): Promise<{
   // 給与系候補（給与管理者権限の付与後に見えるようになる想定。給与＝基本給/役職ベースの取得元、
   // かつ給与データに所属部署が含まれる可能性もある）。
   const staticCandidates = [
-    // 所属
+    // 所属（jinjer回答: /v1/employees/affiliations が department=所属グループID を返す）
     "/v1/departments?page=1",
-    "/v1/employee_departments",
-    "/v1/department_employees",
-    "/v1/affiliations",
-    "/v1/belongs",
-    "/v1/positions",
-    "/v2/employees",
-    // 給与
-    "/v1/salaries",
-    "/v1/salary",
-    "/v1/employee_salaries",
-    "/v1/payrolls",
-    "/v1/payroll",
-    "/v1/wages",
-    "/v1/wage",
-    "/v1/salary_items",
-    "/v1/monthly_salaries",
-    "/v1/payments",
-    "/v1/compensations",
-    "/v1/payslips",
-    "/v1/pay_slips",
-    "/v1/base_salaries",
+    "/v1/employees/affiliations",
+    "/v1/employees/affiliations?page=1",
+    // 給与（jinjer回答: 従業員に紐づく給与単価情報。/v1/employees/xxx パターンで探索）
+    "/v1/employees/salaries",
+    "/v1/employees/unit_prices",
+    "/v1/employees/unit_price",
+    "/v1/employees/wage_unit_prices",
+    "/v1/employees/salary_unit_prices",
+    "/v1/employees/wages",
+    "/v1/employees/payments",
+    "/v1/employees/base_salaries",
+    "/v1/employees/compensations",
   ];
   const results: ProbeResult[] = [];
   for (const p of staticCandidates) results.push(await probePath(p, headers));
