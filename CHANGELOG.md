@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/ishii-code/dgloss-dig/compare/v1.15.0...v1.16.0) (2026-07-29)
+
+
+### Features
+
+* **evaluations:** 既存の評価台帳を再計算（役職ベース変更を反映） ([#55](https://github.com/ishii-code/dgloss-dig/issues/55)) ([41526d0](https://github.com/ishii-code/dgloss-dig/commit/41526d05f38e9b04e7510ecedc0c2d2a09cdf105))
+
 # [1.15.0](https://github.com/ishii-code/dgloss-dig/compare/v1.14.1...v1.15.0) (2026-07-29)
 
 
