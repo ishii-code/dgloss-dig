@@ -147,6 +147,24 @@ export function MemberMaster() {
     }
   }
 
+  // jinjer 給与単価の項目一覧（役職ベースに使える項目の特定用）。
+  async function probeSalaryLabels() {
+    setMsg("⏳ 給与項目を確認中…");
+    try {
+      const rows = await apiSend<Array<{ label: string; nonZero: number; total: number; sampleValue: number }>>(
+        "/api/members/jinjer-salary-labels",
+        "POST",
+        {},
+      );
+      const lines = rows.map(
+        (r) => `・${r.label}: 設定あり${r.nonZero}/${r.total}名（例 ${r.sampleValue.toLocaleString()}円）`,
+      );
+      setMsg(`【jinjer 給与項目】\n役職ベースに使える項目を選んでください\n` + lines.join("\n"));
+    } catch (e) {
+      setMsg(`給与項目の確認失敗: ${(e as Error).message}`);
+    }
+  }
+
   // 部署ツリーの正規化プレビュー（末端所属 → 事業部 の対応確認）。
   async function probeOrg() {
     setMsg("⏳ 部署ツリーを確認中…");
@@ -188,6 +206,9 @@ export function MemberMaster() {
         </button>
         <button onClick={probeOrg} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           部署ツリー確認
+        </button>
+        <button onClick={probeSalaryLabels} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
+          給与項目を確認
         </button>
         <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
       </div>

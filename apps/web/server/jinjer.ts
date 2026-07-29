@@ -333,6 +333,44 @@ function parseBasePay(r: Record<string, unknown>): number {
   return valueOf((l) => l.includes("基本給") && l.includes("月給")) || valueOf((l) => l.includes("基本給"));
 }
 
+/**
+ * jinjer 給与単価の項目（salary_units のラベル）一覧を調べる診断。
+ * 役職ベース(positionBase)に相当する項目があるか確認するために使う。
+ */
+export async function probeSalaryLabels(): Promise<
+  Array<{ label: string; nonZero: number; total: number; sampleValue: number }>
+> {
+  if (!jinjerConnected) return [];
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const stats = new Map<string, { label: string; nonZero: number; total: number; sampleValue: number }>();
+  // 数ページ分から集計（全ページは不要・タイムアウト回避）。
+  for (let page = 1; page <= 3; page++) {
+    const r = await fetchJson(`${JINJER_BASE}/v1/employees/salaries?page=${page}`, headers, 2);
+    if (!r.ok || r.json === null) break;
+    const list = extractList(r.json);
+    if (list.length === 0) break;
+    for (const rec of list) {
+      const sals = Array.isArray(rec["salaries"]) ? (rec["salaries"] as Record<string, unknown>[]) : [];
+      const latest = sals.slice().sort((a, b) => pick(b, "revised_on").localeCompare(pick(a, "revised_on")))[0];
+      const units = latest && Array.isArray(latest["salary_units"]) ? (latest["salary_units"] as Record<string, unknown>[]) : [];
+      for (const u of units) {
+        const label = pick(u, "label");
+        if (!label) continue;
+        const value = Number(u["value"]) || 0;
+        const cur = stats.get(label) ?? { label, nonZero: 0, total: 0, sampleValue: 0 };
+        cur.total += 1;
+        if (value > 0) {
+          cur.nonZero += 1;
+          if (cur.sampleValue === 0) cur.sampleValue = value;
+        }
+        stats.set(label, cur);
+      }
+    }
+  }
+  return [...stats.values()].sort((a, b) => b.nonZero - a.nonZero);
+}
+
 export type EnrichKind = "affiliations" | "salaries";
 
 export interface EnrichRow {
