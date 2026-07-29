@@ -269,6 +269,22 @@ async function fetchSalaryMap(headers: Record<string, string>): Promise<Map<stri
 }
 
 /**
+ * 所属(部署名)と基本給のマップをまとめて取得（別処理の補完用）。
+ * 補完は高速フェイル(tries=1)のため、jinがレート制限中なら空マップで返る。
+ */
+export async function fetchOrgSalaryMaps(): Promise<{
+  affMap: Map<string, string>;
+  salMap: Map<string, number>;
+}> {
+  if (!jinjerConnected) return { affMap: new Map(), salMap: new Map() };
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const affMap = await fetchAffiliationMap(headers).catch(() => new Map<string, string>());
+  const salMap = await fetchSalaryMap(headers).catch(() => new Map<string, number>());
+  return { affMap, salMap };
+}
+
+/**
  * jinjerから従業員を取得して正規化し、在籍者のみを対象にする。
  * 部署(division)は /v1/employees/affiliations、基本給(basePay)は
  * /v1/employees/salaries から補完する。CRM事業部・管理本部は除外。
@@ -286,23 +302,10 @@ export async function fetchEmployeesForSync(): Promise<{
   rawSampleKeys: string[]; // 先頭レコードの項目名（マッピング診断用）
   rawSample: Record<string, unknown> | null; // 先頭レコードそのもの（マッピング診断用）
 }> {
+  // 基本同期は従業員のみを取得（軽量・確実）。部署/給与は別処理
+  // (enrichMembersFromJinjer) で反映し、タイムアウトを避ける。
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
-
-  // 部署・基本給を補完（接続時のみ実API。失敗しても取込自体は継続）。
-  if (jinjerConnected) {
-    const token = await getToken();
-    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-    // レート制限回避のため順次取得（失敗しても取込自体は継続）。
-    const affMap = await fetchAffiliationMap(headers).catch(() => new Map<string, string>());
-    const salMap = await fetchSalaryMap(headers).catch(() => new Map<string, number>());
-    for (const e of all) {
-      const dept = affMap.get(e.personId);
-      if (dept) e.division = dept;
-      const bp = salMap.get(e.personId);
-      if (bp && bp > 0) e.basePay = bp;
-    }
-  }
 
   const active = all.filter((e) => isActive(e.status));
   const employees = active.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
