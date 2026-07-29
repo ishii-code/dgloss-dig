@@ -320,17 +320,24 @@ export function resolveDivision(deptId: string, deptName: string, tree: Map<stri
 }
 
 /** 給与レコード1件 → 基本給(月給)（最新改定の salary_units より）。 */
-function parseBasePay(r: Record<string, unknown>): number {
+function parseBasePay(r: Record<string, unknown>): { monthly: number; hourly: number } {
   const sals = Array.isArray(r["salaries"]) ? (r["salaries"] as Record<string, unknown>[]) : [];
   // 最新の改定（revised_on 降順）を採用。
   const latest = sals.slice().sort((a, b) => pick(b, "revised_on").localeCompare(pick(a, "revised_on")))[0];
   const units = latest && Array.isArray(latest["salary_units"]) ? (latest["salary_units"] as Record<string, unknown>[]) : [];
+  // 同名ラベルが複数ある場合に備え、値が入っているものを優先して拾う。
   const valueOf = (pred: (label: string) => boolean): number => {
-    const u = units.find((x) => pred(pick(x, "label")));
-    return u ? Number(u["value"]) || 0 : 0;
+    const matched = units.filter((x) => pred(pick(x, "label")));
+    for (const u of matched) {
+      const v = Number(u["value"]) || 0;
+      if (v > 0) return v;
+    }
+    return 0;
   };
-  // 基本給(月給) を優先、無ければ 基本給 を含むもの。
-  return valueOf((l) => l.includes("基本給") && l.includes("月給")) || valueOf((l) => l.includes("基本給"));
+  // 月給者は「基本給(月給)」、時給者は「基本給(時給)」（研修時給等は使わない）。
+  const monthly = valueOf((l) => l.includes("基本給") && l.includes("月給"));
+  const hourly = valueOf((l) => l.includes("基本給") && l.includes("時給"));
+  return { monthly, hourly };
 }
 
 /**
@@ -377,7 +384,8 @@ export interface EnrichRow {
   personId: string;
   division?: string; // 事業部レベルに正規化した名前
   teamName?: string; // jinjer 上の末端所属名（参考）
-  basePay?: number;
+  basePay?: number; // 基本給(月給)
+  hourlyWage?: number; // 基本給(時給)（アルバイト等）
 }
 
 /**
@@ -409,8 +417,10 @@ export async function fetchEnrichPage(
         rows.push({ personId, division, teamName: dept.name });
       }
     } else {
-      const basePay = parseBasePay(it);
-      if (basePay > 0) rows.push({ personId, basePay });
+      const { monthly, hourly } = parseBasePay(it);
+      if (monthly > 0 || hourly > 0) {
+        rows.push({ personId, basePay: monthly, hourlyWage: hourly });
+      }
     }
   }
   return { ok: true, status: r.status, count: list.length, rows };
