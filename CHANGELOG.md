@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/ishii-code/dgloss-dig/compare/v1.9.0...v1.10.0) (2026-07-29)
+
+
+### Features
+
+* **division:** jinjer所属→事業部の紐づけ管理を追加 ([#47](https://github.com/ishii-code/dgloss-dig/issues/47)) ([1049638](https://github.com/ishii-code/dgloss-dig/commit/104963867df549317beb5df788dceb1cf70f4ed4))
+
 # [1.9.0](https://github.com/ishii-code/dgloss-dig/compare/v1.8.3...v1.9.0) (2026-07-29)
 
 
