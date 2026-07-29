@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/ishii-code/dgloss-dig/compare/v1.10.1...v1.11.0) (2026-07-29)
+
+
+### Features
+
+* **members:** 基本給を一覧表示＋役員を評価対象から除外 ([#49](https://github.com/ishii-code/dgloss-dig/issues/49)) ([2493dee](https://github.com/ishii-code/dgloss-dig/commit/2493deef9bc254376aa690d62f06837ebacda060))
+
 ## [1.10.1](https://github.com/ishii-code/dgloss-dig/compare/v1.10.0...v1.10.1) (2026-07-29)
 
 
