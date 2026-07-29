@@ -1061,9 +1061,11 @@ export async function enrichMembersPage(
   const ids = r.rows.map((x) => x.personId);
   const targets = await prisma.member.findMany({
     where: { personId: { in: ids }, status: "在籍" },
-    select: { personId: true },
+    select: { personId: true, divisionOverride: true },
   });
   const targetSet = new Set(targets.map((t) => t.personId));
+  // 個別指定がある人は事業部を上書きしない。
+  const overridden = new Set(targets.filter((t) => t.divisionOverride).map((t) => t.personId));
   // 所属は紐づけルール（jinjer所属名 → dgloss事業部）を優先して適用する。
   const rules = kind === "affiliations" ? await listDivisionRules() : [];
 
@@ -1073,8 +1075,10 @@ export async function enrichMembersPage(
     const data: Prisma.MemberUpdateInput = {};
     if (row.division) {
       const team = row.teamName ?? row.division;
-      data.division = applyDivisionRules(team, rules, row.division);
       data.jinjerTeam = team; // 再適用の原本として保持
+      if (!overridden.has(row.personId)) {
+        data.division = applyDivisionRules(team, rules, row.division);
+      }
     }
     if (row.basePay && row.basePay > 0) data.basePay = row.basePay;
     if (Object.keys(data).length === 0) continue;
@@ -1132,10 +1136,11 @@ export async function reapplyDivisionRules(actor: string) {
   const rules = await listDivisionRules();
   const members = await prisma.member.findMany({
     where: { status: "在籍" },
-    select: { personId: true, division: true, jinjerTeam: true },
+    select: { personId: true, division: true, jinjerTeam: true, divisionOverride: true },
   });
   let updated = 0;
   for (const m of members) {
+    if (m.divisionOverride) continue; // 個別指定は保持
     const team = m.jinjerTeam ?? m.division;
     const next = applyDivisionRules(team, rules, m.division);
     if (next && next !== m.division) {
@@ -1147,30 +1152,67 @@ export async function reapplyDivisionRules(actor: string) {
   return { updated, total: members.length, rules: rules.length };
 }
 
+/**
+ * メンバー個別に事業部を指定する（同期・ルール適用より優先される）。
+ * 同一 jinjer 所属でも人によって事業部が異なるケースに対応する。
+ * division を空にすると個別指定を解除し、ルール/同期の値に戻る。
+ */
+export async function setMemberDivision(personId: string, division: string, actor: string) {
+  const value = division.trim();
+  if (value) {
+    await prisma.member.update({
+      where: { personId },
+      data: { divisionOverride: value, division: value },
+    });
+  } else {
+    // 解除: ルールを再適用して元の値に戻す。
+    const m = await prisma.member.findUnique({ where: { personId } });
+    if (!m) throw new NotFoundError("member not found");
+    const rules = await listDivisionRules();
+    const team = m.jinjerTeam ?? m.division;
+    await prisma.member.update({
+      where: { personId },
+      data: { divisionOverride: null, division: applyDivisionRules(team, rules, team) },
+    });
+  }
+  await audit(actor, "member.division.override", "Member", personId, { division: value || null });
+  return { personId, division: value || null };
+}
+
 /** 紐づけ画面用: jinjer 所属（末端）別の人数と、現在の事業部。 */
 export async function listTeamMappings(): Promise<
   Array<{
     team: string;
     division: string;
     count: number;
-    members: Array<{ personId: string; name: string }>;
+    members: Array<{ personId: string; name: string; division: string; overridden: boolean }>;
   }>
 > {
   const members = await prisma.member.findMany({
     where: { status: "在籍" },
-    select: { personId: true, name: true, division: true, jinjerTeam: true },
+    select: { personId: true, name: true, division: true, jinjerTeam: true, divisionOverride: true },
     orderBy: { personId: "asc" },
   });
   const map = new Map<
     string,
-    { team: string; division: string; count: number; members: Array<{ personId: string; name: string }> }
+    {
+      team: string;
+      division: string;
+      count: number;
+      members: Array<{ personId: string; name: string; division: string; overridden: boolean }>;
+    }
   >();
   for (const m of members) {
     const team = m.jinjerTeam ?? m.division ?? "";
     const key = team || "(所属なし)";
     const cur = map.get(key) ?? { team: key, division: m.division ?? "", count: 0, members: [] };
     cur.count += 1;
-    cur.members.push({ personId: m.personId, name: m.name });
+    cur.members.push({
+      personId: m.personId,
+      name: m.name,
+      division: m.division ?? "",
+      overridden: !!m.divisionOverride,
+    });
     map.set(key, cur);
   }
   return [...map.values()].sort((a, b) => b.count - a.count);

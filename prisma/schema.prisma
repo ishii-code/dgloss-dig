@@ -214,6 +214,8 @@ model Member {
   division        String
   /// jinjer 上の末端所属名（紐づけ再適用の原本）
   jinjerTeam      String?
+  /// 個別に指定した事業部。設定時は同期・ルール適用より優先される
+  divisionOverride String?
   position        Position
   jobType         JobType?
   groupLeaderId   String?
