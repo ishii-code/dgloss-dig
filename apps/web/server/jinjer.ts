@@ -28,9 +28,15 @@ export interface NormalizedEmployee {
   division: string; // 事業部/部署（/v1/employees/affiliations の主務 department 名）
   position: string; // 役職
   employmentType: "正社員" | "アルバイト";
+  employmentClassification: string; // jinjer の雇用区分（役員/正社員/アルバイト等）
   joinedOn: string; // YYYY-MM-DD
   status: string; // 在籍状況（在籍/退職 等）
   basePay: number; // 基本給(月給)（/v1/employees/salaries の salary_units より）
+}
+
+/** 役員は Dig 評価の対象外（同期しない）。 */
+export function isExecutive(classification: string): boolean {
+  return classification.includes("役員");
 }
 
 // ── 実API ─────────────────────────────
@@ -214,7 +220,17 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
   const position = VALID_POSITIONS.has(posRaw) ? posRaw : "メンバー";
 
   // division/basePay は別エンドポイント（affiliations/salaries）で後から補完する。
-  return { personId, name, division, position, employmentType, joinedOn, status, basePay: 0 };
+  return {
+    personId,
+    name,
+    division,
+    position,
+    employmentType,
+    employmentClassification: empRaw, // 役員/正社員/アルバイト等（役員の除外に使用）
+    joinedOn,
+    status,
+    basePay: 0,
+  };
 }
 
 // ── サンプル（jinjer形・未接続時の検証用。CRM事業部/管理本部を含めて除外を確認）──
@@ -398,8 +414,10 @@ export async function fetchEmployeesForSync(): Promise<{
   connected: boolean;
   fetched: number; // jinjerから取得した生レコード数（診断用）
   parsed: number; // 社員番号が取れて正規化できた数
-  activeCount: number; // 在籍者数
+  activeCount: number; // 在籍者数（役員を除く評価対象）
   retiredCount: number; // 在籍以外（退職等）の数
+  executiveCount: number; // 役員として除外した数
+  inactivePersonIds: string[]; // 評価対象外（退職・役員）の社員番号。既存メンバーの整理に使う
   departmentCounts: Record<string, number>; // 在籍者の部署別人数（AIテレアポ名確認用）
   rawSampleKeys: string[]; // 先頭レコードの項目名（マッピング診断用）
   rawSample: Record<string, unknown> | null; // 先頭レコードそのもの（マッピング診断用）
@@ -409,9 +427,14 @@ export async function fetchEmployeesForSync(): Promise<{
   const raw = jinjerConnected ? await fetchRawEmployees() : SAMPLE_RAW;
   const all = raw.map(normalize).filter((e): e is NormalizedEmployee => e !== null);
 
-  const active = all.filter((e) => isActive(e.status));
+  // 在籍かつ役員でない人が評価対象（役員は Dig 評価の対象外）。
+  const executives = all.filter((e) => isActive(e.status) && isExecutive(e.employmentClassification));
+  const active = all.filter((e) => isActive(e.status) && !isExecutive(e.employmentClassification));
   const employees = active.filter((e) => !EXCLUDED_DIVISIONS.includes(e.division));
   const excluded = active.filter((e) => EXCLUDED_DIVISIONS.includes(e.division));
+  // 退職者＋役員＝評価対象外。既存メンバーに居れば「退社」にして一覧から外す。
+  const activeIds = new Set(active.map((e) => e.personId));
+  const inactivePersonIds = all.map((e) => e.personId).filter((id) => !activeIds.has(id));
 
   const departmentCounts: Record<string, number> = {};
   for (const e of active) {
@@ -428,7 +451,9 @@ export async function fetchEmployeesForSync(): Promise<{
     fetched: raw.length,
     parsed: all.length,
     activeCount: active.length,
-    retiredCount: all.length - active.length,
+    retiredCount: all.length - active.length - executives.length,
+    executiveCount: executives.length,
+    inactivePersonIds,
     departmentCounts,
     rawSampleKeys,
     rawSample,

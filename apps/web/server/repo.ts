@@ -957,6 +957,8 @@ export async function syncFromJinjer(actor: string) {
     parsed,
     activeCount,
     retiredCount,
+    executiveCount,
+    inactivePersonIds,
     departmentCounts,
     rawSampleKeys,
     rawSample,
@@ -1000,12 +1002,24 @@ export async function syncFromJinjer(actor: string) {
       created += 1;
     }
   }
+  // 評価対象外（退職・役員）が既にマスタに居れば「退社」にして一覧から外す。
+  let retiredInDb = 0;
+  if (inactivePersonIds.length > 0) {
+    const res = await prisma.member.updateMany({
+      where: { personId: { in: inactivePersonIds }, status: "在籍" },
+      data: { status: "退社" },
+    });
+    retiredInDb = res.count;
+  }
+
   await audit(actor, "member.sync.jinjer", "Member", null, {
     connected,
     fetched,
     parsed,
     created,
     updated,
+    executiveCount,
+    retiredInDb,
     excluded: excluded.length,
   });
   return {
@@ -1014,6 +1028,8 @@ export async function syncFromJinjer(actor: string) {
     parsed,
     activeCount,
     retiredCount,
+    executiveCount,
+    retiredInDb,
     departmentCounts,
     created,
     updated,
