@@ -938,7 +938,7 @@ export async function settleRetirement(input: {
 // ─────────────────────────────────────────────
 // jinjer（勤怠）連携: 従業員マスタ自動同期
 // ─────────────────────────────────────────────
-import { EXCLUDED_DIVISIONS, fetchEmployeesForSync } from "./jinjer";
+import { EXCLUDED_DIVISIONS, fetchEmployeesForSync, fetchOrgSalaryMaps } from "./jinjer";
 
 /** jinjerから従業員を取り込み Member へ upsert（CRM事業部・管理本部は除外）。給与は既存を保持。 */
 export async function syncFromJinjer(actor: string) {
@@ -1016,5 +1016,46 @@ export async function syncFromJinjer(actor: string) {
     // マッピング診断用（取込0名時の原因特定）。parsed=0 のときのみ本文/キーを載せる。
     rawSampleKeys,
     rawSample: parsed === 0 ? rawSample : null,
+  };
+}
+
+/**
+ * 既存の在籍メンバーに jinjer の所属(部署)と基本給を反映する（基本同期とは別処理）。
+ * jin がレート制限中なら取れた分だけ反映（0件でも失敗にしない）。冪等・再実行で続行可。
+ */
+export async function enrichMembersFromJinjer(actor: string) {
+  const { affMap, salMap } = await fetchOrgSalaryMaps();
+  const members = await prisma.member.findMany({ where: { status: "在籍" } });
+  let updatedDivision = 0;
+  let updatedSalary = 0;
+  const departmentCounts: Record<string, number> = {};
+  for (const m of members) {
+    const dept = affMap.get(m.personId);
+    const bp = salMap.get(m.personId);
+    const data: Prisma.MemberUpdateInput = {};
+    if (dept) data.division = dept;
+    if (bp && bp > 0) data.basePay = bp;
+    if (Object.keys(data).length > 0) {
+      await prisma.member.update({ where: { personId: m.personId }, data });
+      if (data.division !== undefined) updatedDivision += 1;
+      if (data.basePay !== undefined) updatedSalary += 1;
+    }
+    const key = (dept ?? m.division) || "(部署なし)";
+    departmentCounts[key] = (departmentCounts[key] ?? 0) + 1;
+  }
+  await audit(actor, "member.enrich.jinjer", "Member", null, {
+    affCount: affMap.size,
+    salCount: salMap.size,
+    updatedDivision,
+    updatedSalary,
+    total: members.length,
+  });
+  return {
+    affCount: affMap.size,
+    salCount: salMap.size,
+    updatedDivision,
+    updatedSalary,
+    total: members.length,
+    departmentCounts,
   };
 }
