@@ -1180,6 +1180,55 @@ export async function setMemberDivision(personId: string, division: string, acto
   return { personId, division: value || null };
 }
 
+/** 事業部で絞った在籍メンバー（役職ベース入力画面用）。 */
+export async function listMembersByDivision(division?: string) {
+  return prisma.member.findMany({
+    where: { status: "在籍", ...(division ? { division } : {}) },
+    select: {
+      personId: true,
+      name: true,
+      division: true,
+      position: true,
+      employmentType: true,
+      basePay: true,
+      hourlyWage: true,
+      positionBase: true,
+      evaluationCycle: true,
+    },
+    orderBy: [{ division: "asc" }, { personId: "asc" }],
+  });
+}
+
+/** 在籍メンバーの事業部一覧（絞り込み用）。 */
+export async function listDivisions(): Promise<string[]> {
+  const rows = await prisma.member.findMany({
+    where: { status: "在籍" },
+    select: { division: true },
+    distinct: ["division"],
+    orderBy: { division: "asc" },
+  });
+  return rows.map((r) => r.division).filter(Boolean);
+}
+
+/** 役職・役職ベース・評価サイクルの一括更新（AIテレアポ等の手入力運用）。 */
+export async function bulkUpdatePositionBase(
+  rows: Array<{ personId: string; position?: string; positionBase?: number; evaluationCycle?: string }>,
+  actor: string,
+) {
+  let updated = 0;
+  for (const r of rows) {
+    const data: Prisma.MemberUpdateInput = {};
+    if (r.position) data.position = r.position as Prisma.MemberUpdateInput["position"];
+    if (typeof r.positionBase === "number" && r.positionBase >= 0) data.positionBase = r.positionBase;
+    if (r.evaluationCycle) data.evaluationCycle = r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"];
+    if (Object.keys(data).length === 0) continue;
+    await prisma.member.update({ where: { personId: r.personId }, data });
+    updated += 1;
+  }
+  await audit(actor, "member.position_base.bulk", "Member", null, { updated, count: rows.length });
+  return { updated, total: rows.length };
+}
+
 /** 紐づけ画面用: jinjer 所属（末端）別の人数と、現在の事業部。 */
 export async function listTeamMappings(): Promise<
   Array<{
