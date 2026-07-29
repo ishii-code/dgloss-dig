@@ -73,39 +73,74 @@ function extractList(json: unknown): Record<string, unknown>[] {
   return [];
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 /**
- * 全ページ取得。jinjer /v1/employees は `limit` を受け付けない
- * （E400QP0023）ため page のみでページングし、重複排除で終端検出する。
- * page が無視される実装でも「新規0件で終端」により安全に停止する。
+ * GET して JSON を返す。jinjer は稀に 200 でも非JSON本文（"An error occurred…"
+ * 等の一時エラー/レート制限）を返すため、非JSON/例外時は最大 tries 回リトライする。
  */
-async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
-  const token = await getToken();
+async function fetchJson(
+  url: string,
+  headers: Record<string, string>,
+  tries = 3,
+): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  let last: { ok: boolean; status: number; json: unknown; text: string } = { ok: false, status: 0, json: null, text: "" };
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(url, { method: "GET", headers });
+      const text = await res.text();
+      try {
+        return { ok: res.ok, status: res.status, json: JSON.parse(text), text };
+      } catch {
+        last = { ok: res.ok, status: res.status, json: null, text };
+      }
+    } catch (e) {
+      last = { ok: false, status: 0, json: null, text: String(e).slice(0, 200) };
+    }
+    if (i < tries - 1) await sleep(500 * (i + 1)); // 0.5s, 1s とバックオフ
+  }
+  return last;
+}
+
+/**
+ * ページング取得の共通処理（page のみ・非JSON耐性・重複排除で終端）。
+ * jinjer /v1/* は limit を受け付けない（E400QP0023）ため page のみ。
+ * 2ページ目以降のエラー/非JSONは終端扱いで部分取得を許容する。
+ */
+async function fetchPagedList(
+  path: string,
+  headers: Record<string, string>,
+  keyOf: (it: Record<string, unknown>) => string,
+): Promise<Record<string, unknown>[]> {
+  const sep = path.includes("?") ? "&" : "?";
   const seen = new Set<string>();
   const all: Record<string, unknown>[] = [];
   for (let page = 1; page <= 100; page++) {
-    const res = await fetch(`${JINJER_BASE}/v1/employees?page=${page}`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      if (page === 1) throw new Error(`jinjer /v1/employees ${res.status}: ${(await res.text()).slice(0, 300)}`);
-      break; // 2ページ目以降のエラーは終端扱い
+    const r = await fetchJson(`${JINJER_BASE}${path}${sep}page=${page}`, headers);
+    if (!r.ok || r.json === null) {
+      if (page === 1) throw new Error(`jinjer ${path} ${r.status}: ${r.text.slice(0, 300)}`);
+      break;
     }
-    const list = extractList(await res.json());
+    const list = extractList(r.json);
     if (list.length === 0) break;
     let added = 0;
-    for (const item of list) {
-      const key = String(item["employee_code"] ?? item["emp_code"] ?? item["code"] ?? item["id"] ?? JSON.stringify(item));
-      if (!seen.has(key)) {
-        seen.add(key);
-        all.push(item);
-        added += 1;
-      }
+    for (const it of list) {
+      const key = keyOf(it);
+      if (!seen.has(key)) { seen.add(key); all.push(it); added += 1; }
     }
-    // 新規が増えない（=同じ結果 or 最終ページ）なら終了
     if (added === 0) break;
   }
   return all;
+}
+
+async function fetchRawEmployees(): Promise<Record<string, unknown>[]> {
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  return fetchPagedList("/v1/employees", headers, (item) =>
+    String(item["employee_code"] ?? item["emp_code"] ?? item["code"] ?? item["id"] ?? JSON.stringify(item)),
+  );
 }
 
 // ── 正規化（jinjerのフィールド名は複数候補にフォールバック）──
@@ -190,24 +225,7 @@ function isActive(status: string): boolean {
 
 /** /v1/employees/xxx 系の全ページ取得（page のみ・重複排除で終端）。 */
 async function fetchPaged(path: string, headers: Record<string, string>): Promise<Record<string, unknown>[]> {
-  const seen = new Set<string>();
-  const all: Record<string, unknown>[] = [];
-  for (let page = 1; page <= 100; page++) {
-    const res = await fetch(`${JINJER_BASE}${path}?page=${page}`, { method: "GET", headers });
-    if (!res.ok) {
-      if (page === 1) throw new Error(`jinjer ${path} ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      break;
-    }
-    const list = extractList(await res.json());
-    if (list.length === 0) break;
-    let added = 0;
-    for (const it of list) {
-      const key = String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it));
-      if (!seen.has(key)) { seen.add(key); all.push(it); added += 1; }
-    }
-    if (added === 0) break;
-  }
-  return all;
+  return fetchPagedList(path, headers, (it) => String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it)));
 }
 
 /** 社員番号 → 主務の所属部署名。/v1/employees/affiliations より。 */
@@ -272,10 +290,9 @@ export async function fetchEmployeesForSync(): Promise<{
   if (jinjerConnected) {
     const token = await getToken();
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-    const [affMap, salMap] = await Promise.all([
-      fetchAffiliationMap(headers).catch(() => new Map<string, string>()),
-      fetchSalaryMap(headers).catch(() => new Map<string, number>()),
-    ]);
+    // レート制限回避のため順次取得（失敗しても取込自体は継続）。
+    const affMap = await fetchAffiliationMap(headers).catch(() => new Map<string, string>());
+    const salMap = await fetchSalaryMap(headers).catch(() => new Map<string, number>());
     for (const e of all) {
       const dept = affMap.get(e.personId);
       if (dept) e.division = dept;
