@@ -1,9 +1,23 @@
+/** レスポンスをJSONとして安全に読む。非JSON（タイムアウト等のエラーページ）は明示エラーに。 */
+async function readJson(res: Response, path: string): Promise<{ data?: unknown; error?: string }> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as { data?: unknown; error?: string };
+  } catch {
+    // Vercel のタイムアウト/エラーページ等、非JSONが返るケースを分かりやすく通知。
+    if (res.status === 504 || /timeout/i.test(text)) {
+      throw new Error(`サーバー処理がタイムアウトしました（${path}）。時間をおいて再試行してください。`);
+    }
+    throw new Error(`サーバー応答が不正です（HTTP ${res.status} ${path}）。時間をおいて再試行してください。`);
+  }
+}
+
 /** クライアント側 API ラッパー（失敗時は呼び出し側でモックにフォールバック）。 */
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(path, { cache: "no-store" });
-  if (!res.ok) throw new Error(`GET ${path} ${res.status}`);
-  const json = (await res.json()) as { data: T };
-  return json.data;
+  const json = await readJson(res, path);
+  if (!res.ok) throw new Error(json.error ?? `GET ${path} ${res.status}`);
+  return json.data as T;
 }
 
 export async function apiSend<T>(
@@ -16,7 +30,7 @@ export async function apiSend<T>(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = (await res.json()) as { data?: T; error?: string };
+  const json = await readJson(res, path);
   if (!res.ok) throw new Error(json.error ?? `${method} ${path} ${res.status}`);
   return json.data as T;
 }

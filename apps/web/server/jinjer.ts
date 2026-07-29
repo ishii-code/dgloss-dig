@@ -113,12 +113,13 @@ async function fetchPagedList(
   path: string,
   headers: Record<string, string>,
   keyOf: (it: Record<string, unknown>) => string,
+  tries = 3,
 ): Promise<Record<string, unknown>[]> {
   const sep = path.includes("?") ? "&" : "?";
   const seen = new Set<string>();
   const all: Record<string, unknown>[] = [];
   for (let page = 1; page <= 100; page++) {
-    const r = await fetchJson(`${JINJER_BASE}${path}${sep}page=${page}`, headers);
+    const r = await fetchJson(`${JINJER_BASE}${path}${sep}page=${page}`, headers, tries);
     if (!r.ok || r.json === null) {
       if (page === 1) throw new Error(`jinjer ${path} ${r.status}: ${r.text.slice(0, 300)}`);
       break;
@@ -224,8 +225,10 @@ function isActive(status: string): boolean {
 }
 
 /** /v1/employees/xxx 系の全ページ取得（page のみ・重複排除で終端）。 */
+// 補完（所属/給与）はタイムアウト防止のため高速フェイル（tries=1）。
+// jinがレート制限気味でも取込自体を止めない（部署/給与は取れた分だけ反映）。
 async function fetchPaged(path: string, headers: Record<string, string>): Promise<Record<string, unknown>[]> {
-  return fetchPagedList(path, headers, (it) => String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it)));
+  return fetchPagedList(path, headers, (it) => String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it)), 1);
 }
 
 /** 社員番号 → 主務の所属部署名。/v1/employees/affiliations より。 */

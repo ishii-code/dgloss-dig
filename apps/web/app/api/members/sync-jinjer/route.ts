@@ -6,7 +6,7 @@ import { syncFromJinjer } from "@/server/repo";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // 従業員＋所属＋給与を各全ページ取得するため実行時間を延長。
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // jinjer（勤怠）から従業員マスタを自動同期（CRM事業部・管理本部は除外）
 const Body = z.object({ actor: z.string().min(1).max(64) });
