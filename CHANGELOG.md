@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/ishii-code/dgloss-dig/compare/v1.10.0...v1.10.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **division:** 所属一覧でその場で紐づけ（ページ最上部への移動を廃止） ([#48](https://github.com/ishii-code/dgloss-dig/issues/48)) ([8bf49a7](https://github.com/ishii-code/dgloss-dig/commit/8bf49a781008ebe88432f79b5432bc948a796aea))
+
 # [1.10.0](https://github.com/ishii-code/dgloss-dig/compare/v1.9.0...v1.10.0) (2026-07-29)
 
 
