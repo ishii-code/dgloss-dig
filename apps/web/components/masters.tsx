@@ -46,6 +46,7 @@ export function MemberMaster() {
   const [form, setForm] = useState<Member>(emptyMember);
   const [msg, setMsg] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
+  const [syncing, setSyncing] = useState(false);
 
   async function load() {
     try {
@@ -77,7 +78,10 @@ export function MemberMaster() {
     }
   }
   async function syncJinjer() {
-    if (!confirm("jinjer から在籍の従業員マスタを同期します（退職者は除外。事業部/部署・給与は jinjer 従業員APIに含まれないため未設定）。よろしいですか？")) return;
+    if (syncing) return;
+    if (!confirm("jinjer から在籍の従業員マスタを同期します（在籍者・所属部署・基本給を取得。退職者は除外）。取得件数が多いと最大1分ほどかかります。よろしいですか？")) return;
+    setSyncing(true);
+    setMsg("⏳ jinjer同期中…（従業員・所属・給与を取得中。最大1分ほどかかります。完了までこのままお待ちください）");
     try {
       const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
@@ -99,6 +103,8 @@ export function MemberMaster() {
       await load();
     } catch (e) {
       setMsg(`jinjer同期失敗: ${(e as Error).message}`);
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -130,10 +136,10 @@ export function MemberMaster() {
     <>
       <SectionHeader title="従業員マスタ" note="jinjer（勤怠）から自動連携。Person ID は社員番号で突合。" />
       <div className="mb-3 flex flex-wrap items-center gap-3">
-        <button onClick={syncJinjer} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
-          jinjer（勤怠）から同期
+        <button onClick={syncJinjer} disabled={syncing} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white disabled:opacity-60">
+          {syncing ? "⏳ 同期中…" : "jinjer（勤怠）から同期"}
         </button>
-        <button onClick={probeOrg} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted">
+        <button onClick={probeOrg} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           jinjer組織API調査
         </button>
         <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
