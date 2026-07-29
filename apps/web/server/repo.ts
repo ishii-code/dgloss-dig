@@ -1048,12 +1048,18 @@ export async function enrichMembersPage(
     select: { personId: true },
   });
   const targetSet = new Set(targets.map((t) => t.personId));
+  // 所属は紐づけルール（jinjer所属名 → dgloss事業部）を優先して適用する。
+  const rules = kind === "affiliations" ? await listDivisionRules() : [];
 
   let updated = 0;
   for (const row of r.rows) {
     if (!targetSet.has(row.personId)) continue;
     const data: Prisma.MemberUpdateInput = {};
-    if (row.division) data.division = row.division;
+    if (row.division) {
+      const team = row.teamName ?? row.division;
+      data.division = applyDivisionRules(team, rules, row.division);
+      data.jinjerTeam = team; // 再適用の原本として保持
+    }
     if (row.basePay && row.basePay > 0) data.basePay = row.basePay;
     if (Object.keys(data).length === 0) continue;
     await prisma.member.update({ where: { personId: row.personId }, data });
@@ -1063,6 +1069,85 @@ export async function enrichMembersPage(
     await audit(actor, `member.enrich.${kind}`, "Member", null, { page, updated });
   }
   return { kind, page, fetched: r.count, updated, done: false };
+}
+
+// ─────────────────────────────────────────────
+// 部署の紐づけ（jinjer 所属名 → dgloss 事業部）
+// ─────────────────────────────────────────────
+/** ルール一覧（前方一致は長いパターン優先で評価するため長さ降順）。 */
+export const listDivisionRules = () =>
+  prisma.divisionRule.findMany({ orderBy: [{ division: "asc" }, { pattern: "asc" }] });
+
+/** ルールを適用して事業部名を決める。該当なしは fallback をそのまま返す。 */
+export function applyDivisionRules(
+  team: string,
+  rules: Array<{ pattern: string; division: string }>,
+  fallback: string,
+): string {
+  if (!team) return fallback;
+  // 前方一致。より長い（具体的な）パターンを優先。
+  const hit = rules
+    .filter((r) => r.pattern && team.startsWith(r.pattern))
+    .sort((a, b) => b.pattern.length - a.pattern.length)[0];
+  return hit ? hit.division : fallback;
+}
+
+export async function upsertDivisionRule(pattern: string, division: string, actor: string) {
+  const row = await prisma.divisionRule.upsert({
+    where: { pattern },
+    update: { division },
+    create: { pattern, division },
+  });
+  await audit(actor, "division.rule.upsert", "DivisionRule", String(row.id), { pattern, division });
+  return row;
+}
+
+export async function deleteDivisionRule(id: number, actor: string) {
+  const row = await prisma.divisionRule.delete({ where: { id } });
+  await audit(actor, "division.rule.delete", "DivisionRule", String(id), { pattern: row.pattern });
+  return { ok: true };
+}
+
+/**
+ * 保存済みルールを全在籍メンバーへ再適用する（jinjer へは問い合わせない）。
+ * jinjerTeam（末端所属の原本）を元に division を再計算するため高速。
+ */
+export async function reapplyDivisionRules(actor: string) {
+  const rules = await listDivisionRules();
+  const members = await prisma.member.findMany({
+    where: { status: "在籍" },
+    select: { personId: true, division: true, jinjerTeam: true },
+  });
+  let updated = 0;
+  for (const m of members) {
+    const team = m.jinjerTeam ?? m.division;
+    const next = applyDivisionRules(team, rules, m.division);
+    if (next && next !== m.division) {
+      await prisma.member.update({ where: { personId: m.personId }, data: { division: next } });
+      updated += 1;
+    }
+  }
+  await audit(actor, "division.rule.reapply", "Member", null, { updated, rules: rules.length });
+  return { updated, total: members.length, rules: rules.length };
+}
+
+/** 紐づけ画面用: jinjer 所属（末端）別の人数と、現在の事業部。 */
+export async function listTeamMappings(): Promise<
+  Array<{ team: string; division: string; count: number }>
+> {
+  const members = await prisma.member.findMany({
+    where: { status: "在籍" },
+    select: { division: true, jinjerTeam: true },
+  });
+  const map = new Map<string, { team: string; division: string; count: number }>();
+  for (const m of members) {
+    const team = m.jinjerTeam ?? m.division ?? "";
+    const key = team || "(所属なし)";
+    const cur = map.get(key) ?? { team: key, division: m.division ?? "", count: 0 };
+    cur.count += 1;
+    map.set(key, cur);
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
 /**
