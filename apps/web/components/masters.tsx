@@ -103,25 +103,38 @@ export function MemberMaster() {
     }
   }
 
-  // jinjer の所属(部署)・基本給を既存の在籍メンバーへ反映（基本同期とは別処理）。
+  // jinjer の所属(部署)・基本給を在籍メンバーへ反映。
+  // 1リクエスト=1ページに細分化し、クライアント側でページを進めることでタイムアウトを回避する。
   async function enrichJinjer() {
     if (syncing) return;
     setSyncing(true);
-    setMsg("⏳ 部署・給与を反映中…（jinjer所属/給与を取得中。最大1〜2分ほどかかる場合があります）");
+    const totals = { affiliations: 0, salaries: 0 };
+    const errors: string[] = [];
     try {
-      const r = await apiSend<{ affCount: number; salCount: number; updatedDivision: number; updatedSalary: number; total: number; departmentCounts?: Record<string, number> }>(
-        "/api/members/enrich-jinjer",
-        "POST",
-        { actor: ACTOR },
-      );
-      let msg = `部署・給与の反映完了: 部署更新${r.updatedDivision}名 / 基本給更新${r.updatedSalary}名（対象${r.total}名）`;
-      if (r.affCount === 0 && r.salCount === 0) {
-        msg += `\n※ jinがレート制限中の可能性。数分おいて再実行すると入ります。`;
+      for (const kind of ["affiliations", "salaries"] as const) {
+        const label = kind === "affiliations" ? "部署" : "給与";
+        for (let page = 1; page <= 100; page++) {
+          setMsg(`⏳ ${label}を反映中… ${page}ページ目（部署${totals.affiliations}名 / 給与${totals.salaries}名 更新済）`);
+          const r = await apiSend<{ fetched: number; updated: number; done: boolean; error?: string }>(
+            "/api/members/enrich-jinjer",
+            "POST",
+            { actor: ACTOR, kind, page },
+          );
+          if (r.error) { errors.push(`${label} ${page}ページ目: ${r.error}`); break; }
+          totals[kind] += r.updated;
+          if (r.done || r.fetched === 0) break;
+        }
       }
-      if (r.departmentCounts) {
-        const rows = Object.entries(r.departmentCounts).sort((a, b) => b[1] - a[1]);
+      let msg = `部署・給与の反映完了: 部署更新${totals.affiliations}名 / 基本給更新${totals.salaries}名`;
+      if (errors.length > 0) {
+        msg += `\n※ 途中で中断（${errors[0]}）。時間をおいて再実行すると続きから反映されます。`;
+      }
+      // 反映後の部署別人数を取得して表示。
+      try {
+        const counts = await apiGet<Record<string, number>>("/api/members/enrich-jinjer");
+        const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
         msg += `\n【部署別 在籍人数】\n` + rows.map(([d, n]) => `・${d}: ${n}名`).join("\n");
-      }
+      } catch { /* 集計失敗は無視 */ }
       setMsg(msg);
       await load();
     } catch (e) {
