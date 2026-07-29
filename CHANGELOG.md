@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/ishii-code/dgloss-dig/compare/v1.11.0...v1.12.0) (2026-07-29)
+
+
+### Features
+
+* **division:** 所属別人数をクリックして所属メンバーの氏名を表示 ([#50](https://github.com/ishii-code/dgloss-dig/issues/50)) ([3057817](https://github.com/ishii-code/dgloss-dig/commit/305781796dba7e93b5a84ba1b9b980ee7e34dad0))
+
 # [1.11.0](https://github.com/ishii-code/dgloss-dig/compare/v1.10.1...v1.11.0) (2026-07-29)
 
 
