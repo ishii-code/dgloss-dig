@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/ishii-code/dgloss-dig/compare/v1.6.0...v1.7.0) (2026-07-29)
+
+
+### Features
+
+* **jinjer:** 所属(部署)と基本給を取込に反映＋部署別人数を集計 ([#40](https://github.com/ishii-code/dgloss-dig/issues/40)) ([6b7f288](https://github.com/ishii-code/dgloss-dig/commit/6b7f2886aa00a71edb4e2bba8680fc4b474fa237))
+
 # [1.6.0](https://github.com/ishii-code/dgloss-dig/compare/v1.5.0...v1.6.0) (2026-07-29)
 
 
