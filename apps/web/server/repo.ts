@@ -704,15 +704,17 @@ function toSetting(row: DbSetting): Setting {
 }
 
 /**
- * 対象月の評価行を在籍メンバーから生成する（実運用の台帳初期化）。
- * - 既に行がある personId はスキップ（手入力の成果Dig・確定状態を保持）。
- * - 成果Dig/ボーナス/借入は 0 で作成し、以後は既存の成果Dig入力フローで更新する。
+ * 対象月の評価行を在籍メンバーから生成／再計算する。
+ * - 未作成の personId は新規作成（成果Dig/ボーナス/借入は 0）。
+ * - 既存かつ未確定の行は、現在のマスタ（役職ベース・雇用形態・入社日・
+ *   サイクル）で予算側を再計算する。実績（成果Dig/ボーナス/借入）は保持。
+ * - 確定済みの行は変更しない。
  * - Setting 未作成の月は DEFAULT_SETTING で作成する。
  */
 export async function generateEvaluations(
   yearMonth: string,
   actor: string,
-): Promise<{ created: number; skipped: number; total: number }> {
+): Promise<{ created: number; recalculated: number; skipped: number; total: number }> {
   const settingRow =
     (await prisma.setting.findUnique({ where: { yearMonth } })) ??
     (await prisma.setting.create({
@@ -737,18 +739,71 @@ export async function generateEvaluations(
     where: { status: "在籍" },
     orderBy: [{ division: "asc" }, { personId: "asc" }],
   });
-  const existing = new Set(
-    (
-      await prisma.monthlyEvaluation.findMany({
-        where: { yearMonth },
-        select: { personId: true },
-      })
-    ).map((e) => e.personId),
-  );
+  // 既存行は「確定済みなら据え置き」「未確定なら現在のマスタで再計算」する。
+  // 成果Dig/ボーナス/借入（実績）は保持し、予算側だけ計算し直す。
+  const existingRows = await prisma.monthlyEvaluation.findMany({
+    where: { yearMonth },
+    select: {
+      personId: true,
+      finalized: true,
+      seikaDig: true,
+      bonusDig: true,
+      loanDig: true,
+      surplusChoice: true,
+    },
+  });
+  const existing = new Map(existingRows.map((e) => [e.personId, e]));
 
   let created = 0;
+  let recalculated = 0;
   for (const m of members) {
-    if (existing.has(m.personId)) continue;
+    const prev = existing.get(m.personId);
+    if (prev?.finalized) continue; // 確定済みは触らない
+
+    if (prev) {
+      // 実績を保持したまま、役職ベース等の変更を反映して再計算。
+      const seika = prev.seikaDig.toNumber();
+      const bonus = prev.bonusDig.toNumber();
+      const loan = prev.loanDig.toNumber();
+      const ev = evaluateMonthly({
+        yearMonth,
+        personId: m.personId,
+        employmentType: m.employmentType as EmploymentType,
+        positionBase: m.positionBase.toNumber(),
+        joinedOn: m.joinedOn.toISOString().slice(0, 10),
+        leftOn: m.leftOn ? m.leftOn.toISOString().slice(0, 10) : null,
+        evaluationCycle: m.evaluationCycle as EvaluationCycle,
+        seikaDig: seika,
+        bonusDig: bonus,
+        loanDig: loan,
+        setting,
+      });
+      await prisma.monthlyEvaluation.update({
+        where: { yearMonth_personId: { yearMonth, personId: m.personId } },
+        data: {
+          division: m.division,
+          employmentType: m.employmentType,
+          positionBase: m.positionBase,
+          joinedOn: m.joinedOn,
+          leftOn: m.leftOn ?? null,
+          residencyDays: ev.residencyDays,
+          prorationCoefficient: ev.prorationCoefficient,
+          seatCost: ev.seatCost,
+          totalCost: ev.totalCost,
+          monthlyBudgetDig: ev.monthlyBudgetDig,
+          cumulativeBudgetDig: ev.cumulativeBudgetDig,
+          monthlyActualDig: ev.monthly.actualDig,
+          monthlyRate: ev.monthly.achievementRate,
+          monthlyRank: ev.monthly.rank,
+          cumulativeActualDig: ev.cumulative.actualDig,
+          cumulativeRate: ev.cumulative.achievementRate,
+          cumulativeRank: ev.cumulative.rank,
+        },
+      });
+      recalculated += 1;
+      continue;
+    }
+
     const joinedOn = m.joinedOn.toISOString().slice(0, 10);
     const leftOn = m.leftOn ? m.leftOn.toISOString().slice(0, 10) : null;
     const ev = evaluateMonthly({
@@ -793,13 +848,15 @@ export async function generateEvaluations(
     });
     created++;
   }
-  const skipped = members.length - created;
+  // 触らなかった＝確定済み。
+  const skipped = members.length - created - recalculated;
   await audit(actor, "evaluation.generate", "MonthlyEvaluation", yearMonth, {
     created,
+    recalculated,
     skipped,
     total: members.length,
   });
-  return { created, skipped, total: members.length };
+  return { created, recalculated, skipped, total: members.length };
 }
 
 // ─────────────────────────────────────────────

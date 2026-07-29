@@ -144,13 +144,13 @@ export default function Page() {
     setGenerating(true);
     setGenMsg(null);
     try {
-      const r = await apiSend<{ created: number; skipped: number; total: number }>(
+      const r = await apiSend<{ created: number; recalculated?: number; skipped: number; total: number }>(
         "/api/evaluations/generate",
         "POST",
         { yearMonth: ym, actor: account.id },
       );
       setGenMsg(
-        `${monthLabel(ym)}の評価台帳を生成しました: 新規 ${r.created} 件 / 既存 ${r.skipped} 件（対象 ${r.total} 名）`,
+        `${monthLabel(ym)}の評価台帳を更新しました: 新規 ${r.created} 件 / 再計算 ${r.recalculated ?? 0} 件 / 確定済みのため据え置き ${r.skipped} 件（対象 ${r.total} 名）`,
       );
       await loadMembers();
     } catch (e) {
@@ -239,18 +239,24 @@ export default function Page() {
           </span>
         </div>
 
-        {/* 実データ化: 評価台帳が未生成のときの管理者向けアクション */}
-        {source === "mock" && isAdmin && (
-          <div className="mt-4 flex flex-wrap items-center gap-3 rounded-card border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
-            <span className="text-semantic-warn">
-              評価データが未生成のためサンプル表示中です。在籍メンバーの評価台帳（{quarterLabelOf(ym)} / {monthLabel(ym)}）を生成すると実データ表示に切り替わります。
+        {/* 評価台帳の生成／再計算（管理者）。役職ベース等を変更したら再計算で反映する。 */}
+        {isAdmin && (
+          <div
+            className={`mt-4 flex flex-wrap items-center gap-3 rounded-card border px-4 py-3 text-sm ${
+              source === "mock" ? "border-amber-200 bg-amber-50" : "border-surface-border bg-white"
+            }`}
+          >
+            <span className={source === "mock" ? "text-semantic-warn" : "text-ink-muted"}>
+              {source === "mock"
+                ? `評価データが未生成のためサンプル表示中です。在籍メンバーの評価台帳（${quarterLabelOf(ym)} / ${monthLabel(ym)}）を生成すると実データ表示に切り替わります。`
+                : `評価台帳（${quarterLabelOf(ym)} / ${monthLabel(ym)}）。役職ベース・所属を変更した後は再計算してください（実績は保持されます）。`}
             </span>
             <button
               onClick={() => void generate()}
               disabled={generating}
               className="ml-auto shrink-0 rounded-card bg-brand-primary px-3 py-1.5 font-semibold text-white disabled:opacity-50"
             >
-              {generating ? "生成中…" : "実データを生成"}
+              {generating ? "処理中…" : source === "mock" ? "実データを生成" : "評価台帳を再計算"}
             </button>
           </div>
         )}
