@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/ishii-code/dgloss-dig/compare/v1.14.0...v1.14.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **jinjer:** 時給者の給与を取り込めるよう修正（基本給(時給)→hourlyWage） ([#53](https://github.com/ishii-code/dgloss-dig/issues/53)) ([1727dd3](https://github.com/ishii-code/dgloss-dig/commit/1727dd345d11358fb47980688fb7e61306ea18c0))
+
 # [1.14.0](https://github.com/ishii-code/dgloss-dig/compare/v1.13.0...v1.14.0) (2026-07-29)
 
 
