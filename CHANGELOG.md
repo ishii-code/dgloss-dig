@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/ishii-code/dgloss-dig/compare/v1.13.0...v1.14.0) (2026-07-29)
+
+
+### Features
+
+* **jinjer:** 給与項目の一覧を確認する診断を追加 ([#52](https://github.com/ishii-code/dgloss-dig/issues/52)) ([023470f](https://github.com/ishii-code/dgloss-dig/commit/023470fa9fe35cd2b4cb6776b1014be0c681d07a))
+
 # [1.13.0](https://github.com/ishii-code/dgloss-dig/compare/v1.12.0...v1.13.0) (2026-07-29)
 
 
