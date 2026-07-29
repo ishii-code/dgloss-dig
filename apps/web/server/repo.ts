@@ -1081,6 +1081,7 @@ export async function enrichMembersPage(
       }
     }
     if (row.basePay && row.basePay > 0) data.basePay = row.basePay;
+    if (row.hourlyWage && row.hourlyWage > 0) data.hourlyWage = row.hourlyWage;
     if (Object.keys(data).length === 0) continue;
     await prisma.member.update({ where: { personId: row.personId }, data });
     updated += 1;

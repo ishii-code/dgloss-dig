@@ -21,6 +21,7 @@ interface Member {
   jobType: string | null;
   employmentType: string;
   basePay: number;
+  hourlyWage?: number | null;
   positionBase: number;
   joinedOn: string;
   evaluationCycle: string;
@@ -240,7 +241,15 @@ export function MemberMaster() {
                 <td className="px-3 py-2 text-ink-muted">{m.division}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.position}/{m.jobType ?? "—"}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.employmentType}</td>
-                <td className="px-3 py-2 text-right">{m.basePay > 0 ? yen(m.basePay) : <span className="text-ink-faint">未取得</span>}</td>
+                <td className="px-3 py-2 text-right">
+                  {m.basePay > 0 ? (
+                    yen(m.basePay)
+                  ) : m.hourlyWage && m.hourlyWage > 0 ? (
+                    <span title="時給">{yen(m.hourlyWage)}<span className="ml-0.5 text-[10px] text-ink-muted">/時</span></span>
+                  ) : (
+                    <span className="text-ink-faint">未取得</span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-right">{yen(m.positionBase)}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.evaluationCycle}</td>
                 <td className="px-3 py-2 text-center">
