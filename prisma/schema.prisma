@@ -207,6 +207,12 @@ model DivisionRule {
   updatedAt DateTime @updatedAt
 }
 
+/// Dig制度の対象事業部。登録された事業部のメンバーだけが評価対象になる。
+model TargetDivision {
+  division  String   @id
+  createdAt DateTime @default(now())
+}
+
 /// メンバーマスタ（要件 F-2）。personId は手入力の Person ID（v1.1 Q4）。
 model Member {
   personId        String          @id
