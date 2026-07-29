@@ -88,12 +88,7 @@ export function MemberMaster() {
         "POST",
         { actor: ACTOR },
       );
-      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）`;
-      // 部署別人数（AIテレアポの正確な部署名を確認するため）。
-      if (r.departmentCounts) {
-        const rows = Object.entries(r.departmentCounts).sort((a, b) => b[1] - a[1]);
-        msg += `\n【部署別 在籍人数】\n` + rows.map(([d, n]) => `・${d}: ${n}名`).join("\n");
-      }
+      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）\n次に「部署・給与を反映」を押すと所属部署と基本給が入ります。`;
       // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
       if (r.fetched > 0 && r.parsed === 0) {
         msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;
@@ -103,6 +98,34 @@ export function MemberMaster() {
       await load();
     } catch (e) {
       setMsg(`jinjer同期失敗: ${(e as Error).message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // jinjer の所属(部署)・基本給を既存の在籍メンバーへ反映（基本同期とは別処理）。
+  async function enrichJinjer() {
+    if (syncing) return;
+    setSyncing(true);
+    setMsg("⏳ 部署・給与を反映中…（jinjer所属/給与を取得中。最大1〜2分ほどかかる場合があります）");
+    try {
+      const r = await apiSend<{ affCount: number; salCount: number; updatedDivision: number; updatedSalary: number; total: number; departmentCounts?: Record<string, number> }>(
+        "/api/members/enrich-jinjer",
+        "POST",
+        { actor: ACTOR },
+      );
+      let msg = `部署・給与の反映完了: 部署更新${r.updatedDivision}名 / 基本給更新${r.updatedSalary}名（対象${r.total}名）`;
+      if (r.affCount === 0 && r.salCount === 0) {
+        msg += `\n※ jinがレート制限中の可能性。数分おいて再実行すると入ります。`;
+      }
+      if (r.departmentCounts) {
+        const rows = Object.entries(r.departmentCounts).sort((a, b) => b[1] - a[1]);
+        msg += `\n【部署別 在籍人数】\n` + rows.map(([d, n]) => `・${d}: ${n}名`).join("\n");
+      }
+      setMsg(msg);
+      await load();
+    } catch (e) {
+      setMsg(`部署・給与の反映失敗: ${(e as Error).message}`);
     } finally {
       setSyncing(false);
     }
@@ -137,7 +160,10 @@ export function MemberMaster() {
       <SectionHeader title="従業員マスタ" note="jinjer（勤怠）から自動連携。Person ID は社員番号で突合。" />
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <button onClick={syncJinjer} disabled={syncing} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white disabled:opacity-60">
-          {syncing ? "⏳ 同期中…" : "jinjer（勤怠）から同期"}
+          {syncing ? "⏳ 処理中…" : "① jinjer（勤怠）から同期"}
+        </button>
+        <button onClick={enrichJinjer} disabled={syncing} className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white disabled:opacity-60">
+          {syncing ? "⏳ 処理中…" : "② 部署・給与を反映"}
         </button>
         <button onClick={probeOrg} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           jinjer組織API調査
