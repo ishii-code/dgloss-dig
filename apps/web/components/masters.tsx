@@ -84,12 +84,14 @@ export function MemberMaster() {
     setSyncing(true);
     setMsg("⏳ jinjer同期中…（従業員・所属・給与を取得中。最大1分ほどかかります。完了までこのままお待ちください）");
     try {
-      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; executiveCount?: number; retiredInDb?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
-      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）\n次に「部署・給与を反映」を押すと所属部署と基本給が入ります。`;
+      let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}／役員除外${r.executiveCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）`;
+      if (r.retiredInDb && r.retiredInDb > 0) msg += `\n評価対象外（退職・役員）${r.retiredInDb}名を一覧から外しました。`;
+      msg += `\n次に「② 部署・給与を反映」を押すと所属部署と基本給が入ります。`;
       // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
       if (r.fetched > 0 && r.parsed === 0) {
         msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;
@@ -203,6 +205,7 @@ export function MemberMaster() {
               <th className="px-3 py-2 font-semibold">事業部</th>
               <th className="px-3 py-2 font-semibold">役職/職種</th>
               <th className="px-3 py-2 font-semibold">雇用</th>
+              <th className="px-3 py-2 text-right font-semibold">基本給</th>
               <th className="px-3 py-2 text-right font-semibold">役職ベース</th>
               <th className="px-3 py-2 font-semibold">サイクル</th>
               <th className="px-3 py-2 text-center font-semibold">操作</th>
@@ -216,6 +219,7 @@ export function MemberMaster() {
                 <td className="px-3 py-2 text-ink-muted">{m.division}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.position}/{m.jobType ?? "—"}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.employmentType}</td>
+                <td className="px-3 py-2 text-right">{m.basePay > 0 ? yen(m.basePay) : <span className="text-ink-faint">未取得</span>}</td>
                 <td className="px-3 py-2 text-right">{yen(m.positionBase)}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.evaluationCycle}</td>
                 <td className="px-3 py-2 text-center">
