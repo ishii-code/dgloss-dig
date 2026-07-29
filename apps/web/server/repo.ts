@@ -940,6 +940,7 @@ export async function settleRetirement(input: {
 // ─────────────────────────────────────────────
 import {
   EXCLUDED_DIVISIONS,
+  fetchDepartmentTree,
   fetchEmployeesForSync,
   fetchEnrichPage,
   fetchOrgSalaryMaps,
@@ -1062,6 +1063,24 @@ export async function enrichMembersPage(
     await audit(actor, `member.enrich.${kind}`, "Member", null, { page, updated });
   }
   return { kind, page, fetched: r.count, updated, done: false };
+}
+
+/**
+ * 部署ツリーの正規化プレビュー（末端所属 → 事業部 の対応を確認する診断）。
+ * 反映せずに、所属1ページ目から「末端名 → 正規化後の事業部名」を返す。
+ */
+export async function previewDivisionMapping(): Promise<{
+  sample: Array<{ personId: string; team: string; division: string }>;
+  treeSize: number;
+}> {
+  const tree = await fetchDepartmentTree();
+  const r = await fetchEnrichPage("affiliations", 1);
+  const sample = r.rows.slice(0, 40).map((x) => ({
+    personId: x.personId,
+    team: x.teamName ?? "",
+    division: x.division ?? "",
+  }));
+  return { sample, treeSize: tree.size };
 }
 
 /** 在籍メンバーの部署別人数（反映結果の確認用）。 */

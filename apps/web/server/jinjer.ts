@@ -241,12 +241,66 @@ async function fetchPaged(path: string, headers: Record<string, string>): Promis
   return fetchPagedList(path, headers, (it) => String(it["employee_id"] ?? it["id"] ?? JSON.stringify(it)), 1);
 }
 
-/** 所属レコード1件 → 主務の所属部署名（未選択は空）。 */
-function parseAffiliation(r: Record<string, unknown>): string {
+/** 所属レコード1件 → 主務の所属部署 {id, name}（未選択は空）。 */
+function parseAffiliation(r: Record<string, unknown>): { id: string; name: string } {
   const affs = Array.isArray(r["affiliations"]) ? (r["affiliations"] as Record<string, unknown>[]) : [];
   // 主務＝先頭の所属。department:{id,name}。
-  const name = pick(asObj(affs[0]?.["department"]), "name");
-  return name && name !== "未選択" ? name : "";
+  const dept = asObj(affs[0]?.["department"]);
+  const name = pick(dept, "name");
+  if (!name || name === "未選択") return { id: "", name: "" };
+  return { id: pick(dept, "id"), name };
+}
+
+// ── 部署ツリー（事業部への正規化） ───────────────────
+// jinjer の所属は末端チーム単位（例「CRM新宿SC第1Gホワイト光U第1T」）で
+// 登録されているため、parent_department_id を辿って「〜事業部」に正規化する。
+interface DeptNode { name: string; parentId: string }
+let deptTreeCache: { tree: Map<string, DeptNode>; expiresAt: number } | null = null;
+
+/** 部署マスタを全ページ取得して id → {name, parentId} のツリーを作る（10分キャッシュ）。 */
+export async function fetchDepartmentTree(): Promise<Map<string, DeptNode>> {
+  if (deptTreeCache && deptTreeCache.expiresAt > Date.now()) return deptTreeCache.tree;
+  const tree = new Map<string, DeptNode>();
+  if (!jinjerConnected) return tree;
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  for (let page = 1; page <= 100; page++) {
+    const r = await fetchJson(`${JINJER_BASE}/v1/departments?page=${page}`, headers, 2);
+    if (!r.ok || r.json === null) break;
+    const list = extractList(r.json);
+    if (list.length === 0) break;
+    let added = 0;
+    for (const d of list) {
+      const id = pick(d, "id");
+      if (!id || tree.has(id)) continue;
+      tree.set(id, { name: pick(d, "name"), parentId: pick(d, "parent_department_id") });
+      added += 1;
+    }
+    if (added === 0) break;
+  }
+  deptTreeCache = { tree, expiresAt: Date.now() + 10 * 60 * 1000 };
+  return tree;
+}
+
+/**
+ * 末端の所属部署を「事業部」レベルへ正規化する。
+ * 自身→親→…と辿り、「事業部」を含む最上位の名前を採用。
+ * 見つからなければ元の部署名をそのまま返す（悪化させない）。
+ */
+export function resolveDivision(deptId: string, deptName: string, tree: Map<string, DeptNode>): string {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let cur = deptId;
+  while (cur && tree.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    const node = tree.get(cur)!;
+    if (node.name) chain.push(node.name);
+    cur = node.parentId;
+  }
+  if (chain.length === 0 && deptName) chain.push(deptName);
+  // chain は 自分→…→ルート の順。「事業部」を含むもののうち最上位を採用。
+  const bu = chain.filter((n) => n.includes("事業部")).pop();
+  return bu ?? deptName ?? "";
 }
 
 /** 給与レコード1件 → 基本給(月給)（最新改定の salary_units より）。 */
@@ -267,7 +321,8 @@ export type EnrichKind = "affiliations" | "salaries";
 
 export interface EnrichRow {
   personId: string;
-  division?: string;
+  division?: string; // 事業部レベルに正規化した名前
+  teamName?: string; // jinjer 上の末端所属名（参考）
   basePay?: number;
 }
 
@@ -287,13 +342,18 @@ export async function fetchEnrichPage(
     return { ok: false, status: r.status, count: 0, rows: [], error: r.text.slice(0, 200) };
   }
   const list = extractList(r.json);
+  // 所属は部署ツリーで「事業部」レベルへ正規化する（末端チーム名のままでは集計できないため）。
+  const tree = kind === "affiliations" ? await fetchDepartmentTree().catch(() => new Map()) : new Map();
   const rows: EnrichRow[] = [];
   for (const it of list) {
     const personId = pick(it, "employee_id", "id");
     if (!personId) continue;
     if (kind === "affiliations") {
-      const division = parseAffiliation(it);
-      if (division) rows.push({ personId, division });
+      const dept = parseAffiliation(it);
+      if (dept.name) {
+        const division = resolveDivision(dept.id, dept.name, tree);
+        rows.push({ personId, division, teamName: dept.name });
+      }
     } else {
       const basePay = parseBasePay(it);
       if (basePay > 0) rows.push({ personId, basePay });
