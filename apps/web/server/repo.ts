@@ -1149,18 +1149,28 @@ export async function reapplyDivisionRules(actor: string) {
 
 /** 紐づけ画面用: jinjer 所属（末端）別の人数と、現在の事業部。 */
 export async function listTeamMappings(): Promise<
-  Array<{ team: string; division: string; count: number }>
+  Array<{
+    team: string;
+    division: string;
+    count: number;
+    members: Array<{ personId: string; name: string }>;
+  }>
 > {
   const members = await prisma.member.findMany({
     where: { status: "在籍" },
-    select: { division: true, jinjerTeam: true },
+    select: { personId: true, name: true, division: true, jinjerTeam: true },
+    orderBy: { personId: "asc" },
   });
-  const map = new Map<string, { team: string; division: string; count: number }>();
+  const map = new Map<
+    string,
+    { team: string; division: string; count: number; members: Array<{ personId: string; name: string }> }
+  >();
   for (const m of members) {
     const team = m.jinjerTeam ?? m.division ?? "";
     const key = team || "(所属なし)";
-    const cur = map.get(key) ?? { team: key, division: m.division ?? "", count: 0 };
+    const cur = map.get(key) ?? { team: key, division: m.division ?? "", count: 0, members: [] };
     cur.count += 1;
+    cur.members.push({ personId: m.personId, name: m.name });
     map.set(key, cur);
   }
   return [...map.values()].sort((a, b) => b.count - a.count);
