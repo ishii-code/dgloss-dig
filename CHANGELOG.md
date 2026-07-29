@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/ishii-code/dgloss-dig/compare/v1.8.1...v1.8.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* **jinjer:** 同期を「取込」と「部署・給与反映」に分離しタイムアウト回避 ([#44](https://github.com/ishii-code/dgloss-dig/issues/44)) ([e115b0b](https://github.com/ishii-code/dgloss-dig/commit/e115b0b70c15332cdf1cdf39985feb536a195fa2))
+
 ## [1.8.1](https://github.com/ishii-code/dgloss-dig/compare/v1.8.0...v1.8.1) (2026-07-29)
 
 
