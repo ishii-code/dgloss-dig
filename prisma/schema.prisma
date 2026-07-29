@@ -197,11 +197,23 @@ model SalaryRange {
   @@unique([position, grade])
 }
 
+/// jinjer の末端所属名 → dgloss 事業部 の紐づけルール（前方一致）。
+/// 例: 「ダイレクトセールス部セールスG」→「AIテレアポ事業部」
+model DivisionRule {
+  id        Int      @id @default(autoincrement())
+  pattern   String   @unique /// jinjer 所属名（前方一致で判定）
+  division  String /// dgloss 側の事業部名
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 /// メンバーマスタ（要件 F-2）。personId は手入力の Person ID（v1.1 Q4）。
 model Member {
   personId        String          @id
   name            String
   division        String
+  /// jinjer 上の末端所属名（紐づけ再適用の原本）
+  jinjerTeam      String?
   position        Position
   jobType         JobType?
   groupLeaderId   String?

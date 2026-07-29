@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { yen } from "@/lib/format";
 import { SectionHeader } from "./ui";
+import { DivisionMapping } from "./division-mapping";
 
 const ACTOR = "B0000071";
 const YM = "2026-01";
@@ -248,6 +249,11 @@ export function MemberMaster() {
         </div>
       </div>
       <style>{`.inp{width:100%;border:1px solid #E2E8F0;border-radius:8px;padding:6px 8px;font-size:13px}`}</style>
+
+      {/* 部署の紐づけ（jinjer 所属 → dgloss 事業部） */}
+      <div className="mt-8">
+        <DivisionMapping />
+      </div>
     </>
   );
 }
