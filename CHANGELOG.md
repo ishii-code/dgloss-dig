@@ -1,3 +1,10 @@
+## [1.8.3](https://github.com/ishii-code/dgloss-dig/compare/v1.8.2...v1.8.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* **jinjer:** 部署・給与の反映を1ページ単位に細分化しタイムアウト解消 ([#45](https://github.com/ishii-code/dgloss-dig/issues/45)) ([5d45ab3](https://github.com/ishii-code/dgloss-dig/commit/5d45ab3b625eae931adad2afabfd0f8241af0538))
+
 ## [1.8.2](https://github.com/ishii-code/dgloss-dig/compare/v1.8.1...v1.8.2) (2026-07-29)
 
 
