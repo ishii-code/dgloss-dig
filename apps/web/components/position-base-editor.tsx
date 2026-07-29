@@ -33,6 +33,38 @@ export function PositionBaseEditor() {
   const [edit, setEdit] = useState<Record<string, { position?: string; positionBase?: number; evaluationCycle?: string }>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Dig制度の対象事業部（ここに入っている事業部だけが評価台帳の対象）。
+  const [targets, setTargets] = useState<string[]>([]);
+
+  const loadTargets = useCallback(async () => {
+    try {
+      const d = await apiGet<{ targets: string[] }>("/api/target-divisions");
+      setTargets(d.targets ?? []);
+    } catch {
+      /* 取得失敗は無視 */
+    }
+  }, []);
+  useEffect(() => {
+    void loadTargets();
+  }, [loadTargets]);
+
+  async function toggleTarget(d: string) {
+    const next = targets.includes(d) ? targets.filter((x) => x !== d) : [...targets, d];
+    setBusy(true);
+    try {
+      await apiSend("/api/target-divisions", "POST", { divisions: next, actor: ACTOR });
+      setTargets(next);
+      setMsg(
+        next.length > 0
+          ? `評価対象の事業部: ${next.join("、")}（予実モニターで「再計算」すると反映されます）`
+          : "評価対象が未設定です（全事業部が対象になります）",
+      );
+    } catch (e) {
+      setMsg(`対象事業部の保存に失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +132,31 @@ export function PositionBaseEditor() {
         title="役職ベースの入力"
         note="予算Dig の計算元。jinjer に該当項目が無いためここで設定します。"
       />
+
+      {/* Dig制度の対象事業部（チェックした事業部だけが評価台帳の対象になる） */}
+      <div className="mb-3 rounded-card border border-surface-border bg-white px-3 py-2">
+        <div className="mb-1 text-xs font-semibold text-ink-muted">
+          Dig評価の対象事業部（チェックした事業部のメンバーだけ評価台帳を作ります）
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {[DEFAULT_DIVISION, ...divisions.filter((d) => d !== DEFAULT_DIVISION)].map((d) => (
+            <label key={d} className="flex items-center gap-1 text-sm">
+              <input
+                type="checkbox"
+                checked={targets.includes(d)}
+                onChange={() => void toggleTarget(d)}
+                disabled={busy}
+              />
+              <span>{d}</span>
+            </label>
+          ))}
+        </div>
+        {targets.length === 0 && (
+          <div className="mt-1 text-[11px] text-semantic-warn">
+            未選択のため全事業部が対象です（役職ベース未入力の方は予算Digが不正確になります）
+          </div>
+        )}
+      </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <span className="text-ink-muted">事業部</span>

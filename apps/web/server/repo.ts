@@ -703,6 +703,45 @@ function toSetting(row: DbSetting): Setting {
   };
 }
 
+// ─────────────────────────────────────────────
+// Dig制度の対象事業部
+// ─────────────────────────────────────────────
+/** 対象事業部の一覧（空なら全事業部が対象）。 */
+export async function listTargetDivisions(): Promise<string[]> {
+  const rows = await prisma.targetDivision.findMany({ orderBy: { division: "asc" } });
+  return rows.map((r) => r.division);
+}
+
+/** 対象事業部を設定し直す（差し替え）。 */
+export async function setTargetDivisions(divisions: string[], actor: string) {
+  const list = [...new Set(divisions.map((d) => d.trim()).filter(Boolean))];
+  await prisma.targetDivision.deleteMany({});
+  if (list.length > 0) {
+    await prisma.targetDivision.createMany({ data: list.map((division) => ({ division })) });
+  }
+  await audit(actor, "target_division.set", "TargetDivision", null, { divisions: list });
+  return { divisions: list };
+}
+
+/**
+ * 対象外事業部の評価行を削除する（対象範囲を絞ったあとの整理用）。
+ * 確定済みの行は残す。
+ */
+export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: string) {
+  const targets = await listTargetDivisions();
+  if (targets.length === 0) return { deleted: 0 };
+  const inScope = await prisma.member.findMany({
+    where: { status: "在籍", division: { in: targets } },
+    select: { personId: true },
+  });
+  const keep = inScope.map((m) => m.personId);
+  const res = await prisma.monthlyEvaluation.deleteMany({
+    where: { yearMonth, finalized: false, personId: { notIn: keep } },
+  });
+  await audit(actor, "evaluation.prune", "MonthlyEvaluation", yearMonth, { deleted: res.count, targets });
+  return { deleted: res.count };
+}
+
 /**
  * 対象月の評価行を在籍メンバーから生成／再計算する。
  * - 未作成の personId は新規作成（成果Dig/ボーナス/借入は 0）。
@@ -735,8 +774,10 @@ export async function generateEvaluations(
     }));
   const setting = toSetting(settingRow);
 
+  // Dig制度の対象事業部に限定（未登録なら全事業部を対象＝従来動作）。
+  const targets = await listTargetDivisions();
   const members = await prisma.member.findMany({
-    where: { status: "在籍" },
+    where: { status: "在籍", ...(targets.length > 0 ? { division: { in: targets } } : {}) },
     orderBy: [{ division: "asc" }, { personId: "asc" }],
   });
   // 既存行は「確定済みなら据え置き」「未確定なら現在のマスタで再計算」する。

@@ -144,13 +144,14 @@ export default function Page() {
     setGenerating(true);
     setGenMsg(null);
     try {
-      const r = await apiSend<{ created: number; recalculated?: number; skipped: number; total: number }>(
+      const r = await apiSend<{ created: number; recalculated?: number; skipped: number; total: number; pruned?: number }>(
         "/api/evaluations/generate",
         "POST",
         { yearMonth: ym, actor: account.id },
       );
       setGenMsg(
-        `${monthLabel(ym)}の評価台帳を更新しました: 新規 ${r.created} 件 / 再計算 ${r.recalculated ?? 0} 件 / 確定済みのため据え置き ${r.skipped} 件（対象 ${r.total} 名）`,
+        `${monthLabel(ym)}の評価台帳を更新しました: 新規 ${r.created} 件 / 再計算 ${r.recalculated ?? 0} 件 / 確定済みのため据え置き ${r.skipped} 件（対象 ${r.total} 名）` +
+          (r.pruned ? ` / 対象外を削除 ${r.pruned} 件` : ""),
       );
       await loadMembers();
     } catch (e) {
