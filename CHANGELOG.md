@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/ishii-code/dgloss-dig/compare/v1.14.1...v1.15.0) (2026-07-29)
+
+
+### Features
+
+* **members:** 役職ベースの一括入力画面を追加（予算Digの計算元） ([#54](https://github.com/ishii-code/dgloss-dig/issues/54)) ([5465358](https://github.com/ishii-code/dgloss-dig/commit/5465358ee988a8aee3d95401c4c035ee89a0ff67))
+
 ## [1.14.1](https://github.com/ishii-code/dgloss-dig/compare/v1.14.0...v1.14.1) (2026-07-29)
 
 
