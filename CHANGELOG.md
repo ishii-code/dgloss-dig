@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/ishii-code/dgloss-dig/compare/v1.16.0...v1.17.0) (2026-07-29)
+
+
+### Features
+
+* **evaluations:** Dig評価の対象事業部を限定（既定: AIテレアポ事業部） ([#56](https://github.com/ishii-code/dgloss-dig/issues/56)) ([36d5e94](https://github.com/ishii-code/dgloss-dig/commit/36d5e9463b263ad714fd1a4240237c3169bc0d33))
+
 # [1.16.0](https://github.com/ishii-code/dgloss-dig/compare/v1.15.0...v1.16.0) (2026-07-29)
 
 
