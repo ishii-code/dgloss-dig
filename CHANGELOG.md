@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/ishii-code/dgloss-dig/compare/v1.5.0...v1.6.0) (2026-07-29)
+
+
+### Features
+
+* **jinjer:** 所属/給与の正解エンドポイント候補で再調査 ([#39](https://github.com/ishii-code/dgloss-dig/issues/39)) ([988b61f](https://github.com/ishii-code/dgloss-dig/commit/988b61f8fb65289cf9fe139241def1d1b90ca3f4))
+
 # [1.5.0](https://github.com/ishii-code/dgloss-dig/compare/v1.4.0...v1.5.0) (2026-07-28)
 
 
