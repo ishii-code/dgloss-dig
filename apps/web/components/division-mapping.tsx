@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { SectionHeader } from "./ui";
 
@@ -16,6 +16,7 @@ interface TeamRow {
   team: string; // jinjer の末端所属名
   division: string; // 現在の dgloss 事業部
   count: number;
+  members: Array<{ personId: string; name: string }>;
 }
 
 /**
@@ -32,6 +33,8 @@ export function DivisionMapping() {
   const [newDivision, setNewDivision] = useState("");
   // 所属一覧の行ごとの入力値（その場で事業部を割り当てる）。
   const [rowInput, setRowInput] = useState<Record<string, string>>({});
+  // 人数クリックで所属メンバーの氏名を開閉する。
+  const [openTeam, setOpenTeam] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -212,9 +215,19 @@ export function DivisionMapping() {
           </thead>
           <tbody>
             {teams.map((t) => (
-              <tr key={t.team} className="border-b border-surface-border last:border-0">
+              <Fragment key={t.team}>
+              <tr className="border-b border-surface-border last:border-0">
                 <td className="px-3 py-2">{t.team}</td>
-                <td className="px-3 py-2 text-right tabular">{t.count}</td>
+                <td className="px-3 py-2 text-right tabular">
+                  {/* 人数クリックで所属メンバーの氏名を表示 */}
+                  <button
+                    onClick={() => setOpenTeam(openTeam === t.team ? null : t.team)}
+                    className="font-semibold text-brand-primary underline decoration-dotted underline-offset-2"
+                    title="クリックで氏名を表示"
+                  >
+                    {t.count}
+                  </button>
+                </td>
                 <td className="px-3 py-2 text-ink-muted">{t.division || "—"}</td>
                 <td className="px-3 py-2">
                   {/* その行で直接割り当て（ページ移動なし） */}
@@ -239,6 +252,25 @@ export function DivisionMapping() {
                   </div>
                 </td>
               </tr>
+              {/* 人数クリックで開く所属メンバー一覧 */}
+              {openTeam === t.team && (
+                <tr className="border-b border-surface-border bg-surface-panel">
+                  <td colSpan={4} className="px-3 py-2">
+                    <div className="mb-1 text-xs font-semibold text-ink-muted">
+                      {t.team} の在籍メンバー（{t.count}名）
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                      {t.members.map((m) => (
+                        <span key={m.personId} className="text-ink">
+                          {m.name}
+                          <span className="ml-1 text-[11px] text-ink-faint">{m.personId}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>
