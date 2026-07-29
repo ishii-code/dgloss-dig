@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/ishii-code/dgloss-dig/compare/v1.12.0...v1.13.0) (2026-07-29)
+
+
+### Features
+
+* **division:** メンバー個別の事業部指定を追加（同一所属で分割可能） ([#51](https://github.com/ishii-code/dgloss-dig/issues/51)) ([986d379](https://github.com/ishii-code/dgloss-dig/commit/986d379da4501fb7daf066217cab9d4a5424c05c))
+
 # [1.12.0](https://github.com/ishii-code/dgloss-dig/compare/v1.11.0...v1.12.0) (2026-07-29)
 
 
