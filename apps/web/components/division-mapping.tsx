@@ -30,6 +30,8 @@ export function DivisionMapping() {
   const [busy, setBusy] = useState(false);
   const [newPattern, setNewPattern] = useState("");
   const [newDivision, setNewDivision] = useState("");
+  // 所属一覧の行ごとの入力値（その場で事業部を割り当てる）。
+  const [rowInput, setRowInput] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -49,17 +51,26 @@ export function DivisionMapping() {
     .filter(Boolean)
     .sort();
 
+  // 紐づけを保存し、そのまま全メンバーへ反映（1操作で完結させる）。
   async function saveRule(pattern: string, division: string) {
-    if (!pattern.trim() || !division.trim()) {
+    const p = pattern.trim();
+    const d = division.trim();
+    if (!p || !d) {
       setMsg("所属名と事業部の両方を入力してください");
       return;
     }
     setBusy(true);
     try {
-      await apiSend("/api/division-rules", "POST", { pattern, division, actor: ACTOR });
-      setMsg(`紐づけを保存しました: ${pattern} → ${division}`);
+      await apiSend("/api/division-rules", "POST", { pattern: p, division: d, actor: ACTOR });
+      const r = await apiSend<{ updated: number }>("/api/division-rules/apply", "POST", { actor: ACTOR });
+      setMsg(`紐づけを保存しました: ${p} → ${d}（${r.updated}名の事業部を更新）`);
       setNewPattern("");
       setNewDivision("");
+      setRowInput((prev) => {
+        const next = { ...prev };
+        delete next[p];
+        return next;
+      });
       await load();
     } catch (e) {
       setMsg(`保存失敗: ${(e as Error).message}`);
@@ -185,7 +196,10 @@ export function DivisionMapping() {
       </div>
 
       {/* jinjer 所属別の在籍人数（未紐づけの発見用） */}
-      <SectionHeader title="jinjer 所属別の在籍人数" note="未紐づけの所属をここから割り当てます" />
+      <SectionHeader
+        title="jinjer 所属別の在籍人数"
+        note="右の欄に事業部を入力して「紐づけ」を押すと、その場で保存・反映されます"
+      />
       <div className="overflow-x-auto rounded-card border border-surface-border bg-white shadow-card">
         <table className="w-full text-sm">
           <thead>
@@ -203,16 +217,26 @@ export function DivisionMapping() {
                 <td className="px-3 py-2 text-right tabular">{t.count}</td>
                 <td className="px-3 py-2 text-ink-muted">{t.division || "—"}</td>
                 <td className="px-3 py-2">
-                  <button
-                    onClick={() => {
-                      setNewPattern(t.team);
-                      setNewDivision(t.division || "");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className="text-brand-primary"
-                  >
-                    上の入力欄へ
-                  </button>
+                  {/* その行で直接割り当て（ページ移動なし） */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={rowInput[t.team] ?? ""}
+                      onChange={(e) => setRowInput({ ...rowInput, [t.team]: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveRule(t.team, rowInput[t.team] ?? "");
+                      }}
+                      placeholder="事業部を入力/選択"
+                      list="division-candidates"
+                      className="min-w-[180px] rounded-card border border-surface-border px-2 py-1 text-sm"
+                    />
+                    <button
+                      onClick={() => void saveRule(t.team, rowInput[t.team] ?? "")}
+                      disabled={busy || !(rowInput[t.team] ?? "").trim()}
+                      className="rounded-card bg-brand-primary px-3 py-1 text-xs font-bold text-white disabled:opacity-40"
+                    >
+                      紐づけ
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
