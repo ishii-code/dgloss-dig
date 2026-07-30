@@ -832,17 +832,44 @@ async function aggregateGroupEvaluations(yearMonth: string) {
 // ─────────────────────────────────────────────
 // Dig申請（成果Digの申請・承認）
 // ─────────────────────────────────────────────
+import type { CalcRule as DbCalcRule } from "@prisma/client";
+import {
+  findContractMasterByCustomer,
+  isContractDbConfigured,
+  resolveContractDivision,
+} from "./contract-db";
+
+/** 申請フォームへ渡す契約1件（契約DBキャッシュ／即時参照で共通の形）。 */
+export interface ContractLookupHit {
+  contractId: string;
+  contractNo: string | null;
+  companyId: string | null;
+  companyName: string;
+  division: string;
+  productName: string;
+  termMonths: number;
+  contractSummary: string | null;
+  startDate: string | null;
+  baseAmount: number;
+  status: string;
+  suggestedDig: number;
+  /** db=同期済みキャッシュ / live=契約管理DBを直接参照 */
+  source: "db" | "live";
+}
+
 /**
  * 顧客ID（企業ID）から契約管理DBのキャッシュを引き、申請フォームの自動入力に使う。
- * 顧客IDが未登録なら空で返し、手入力に委ねる（契約DBの自動連携は未接続でも動く）。
+ * キャッシュに無い場合は CONTRACT_DB_URL があれば契約管理DB（VIEW）を直接参照する。
+ * どちらも見つからなければ空で返し、手入力に委ねる。
  */
-export async function lookupContractsByCompany(companyId: string) {
+export async function lookupContractsByCompany(companyId: string): Promise<ContractLookupHit[]> {
   const contracts = await prisma.contract.findMany({
     where: { OR: [{ companyId }, { id: companyId }, { contractNo: companyId }] },
     include: { assignment: true },
     orderBy: { startDate: "desc" },
   });
   const rules = await prisma.calcRule.findMany({ where: { active: true } });
+  if (contracts.length === 0) return lookupContractsLive(companyId, rules);
   return contracts.map((c) => {
     const contract = {
       id: c.id,
@@ -860,23 +887,6 @@ export async function lookupContractsByCompany(companyId: string) {
       lineItems: (c.lineItems as unknown as ContractLineItem[]) ?? [],
       yearMonth: c.yearMonth,
     } as unknown as Contract;
-    // 事業部のルールで獲得Digの目安を出す（複数該当なら最大値）。
-    const suggested = rules
-      .filter((r) => r.division === c.division)
-      .map((r) =>
-        computeContractDig(contract, {
-          id: r.id,
-          division: r.division,
-          name: r.name,
-          ruleType: r.ruleType as CalcRule["ruleType"],
-          modelKeyFilter: r.modelKeyFilter,
-          unitLine: r.unitLine.toNumber(),
-          unitCall: r.unitCall.toNumber(),
-          ratioPercent: r.ratioPercent.toNumber(),
-          fixedDig: r.fixedDig.toNumber(),
-          active: r.active,
-        } as CalcRule),
-      );
     return {
       contractId: c.id,
       contractNo: c.contractNo,
@@ -889,7 +899,77 @@ export async function lookupContractsByCompany(companyId: string) {
       startDate: c.startDate ? c.startDate.toISOString().slice(0, 10) : null,
       baseAmount: c.baseAmount.toNumber(),
       status: c.status,
-      suggestedDig: suggested.length > 0 ? Math.max(...suggested) : 0,
+      suggestedDig: suggestDig(contract, c.division, rules),
+      source: "db" as const,
+    };
+  });
+}
+
+/** 事業部の算定ルールから獲得Digの目安を出す（複数該当なら最大値・該当なしは0）。 */
+function suggestDig(contract: Contract, division: string, rules: DbCalcRule[]): number {
+  const suggested = rules
+    .filter((r) => r.division === division)
+    .map((r) =>
+      computeContractDig(contract, {
+        id: r.id,
+        division: r.division,
+        name: r.name,
+        ruleType: r.ruleType as CalcRule["ruleType"],
+        modelKeyFilter: r.modelKeyFilter,
+        unitLine: r.unitLine.toNumber(),
+        unitCall: r.unitCall.toNumber(),
+        ratioPercent: r.ratioPercent.toNumber(),
+        fixedDig: r.fixedDig.toNumber(),
+        active: r.active,
+      } as CalcRule),
+    );
+  return suggested.length > 0 ? Math.max(...suggested) : 0;
+}
+
+/**
+ * キャッシュに無い顧客IDを契約管理DB（VIEW）から直接参照する。
+ * CONTRACT_DB_URL 未設定なら空（手入力に委ねる）。読み取り専用で、こちらへは保存しない。
+ */
+async function lookupContractsLive(
+  companyId: string,
+  rules: DbCalcRule[],
+): Promise<ContractLookupHit[]> {
+  if (!isContractDbConfigured()) return [];
+  const rows = await findContractMasterByCustomer(companyId);
+  return rows.map((r, i) => {
+    const division = resolveContractDivision(r);
+    const startDate = (r.startDate ?? r.contractDate)?.slice(0, 10) ?? null;
+    const termMonths = r.termMonths ?? 0;
+    const contract = {
+      id: r.contractId ?? r.contractNo ?? `${r.customerId}#${i}`,
+      contractNo: r.contractNo,
+      customerName: r.customerName,
+      companyId: r.customerCode ?? r.customerId,
+      division,
+      modelKey: r.modelKey ?? r.plan ?? "unknown",
+      status: r.status ?? "unknown",
+      baseAmount: r.monthlyTotal ?? r.baseAmount ?? 0,
+      setupFee: r.setupFee ?? 0,
+      initialFee: r.initialFee ?? 0,
+      termMonths,
+      startDate,
+      lineItems: [] as ContractLineItem[],
+      yearMonth: (startDate ?? "").slice(0, 7),
+    } as unknown as Contract;
+    return {
+      contractId: contract.id,
+      contractNo: r.contractNo,
+      companyId: r.customerCode ?? r.customerId,
+      companyName: r.customerName,
+      division,
+      productName: r.modelKey ?? r.plan ?? "",
+      termMonths,
+      contractSummary: termMonths > 0 ? `${termMonths}ヵ月プラン` : (r.plan ?? null),
+      startDate,
+      baseAmount: r.monthlyTotal ?? r.baseAmount ?? 0,
+      status: r.status ?? "unknown",
+      suggestedDig: suggestDig(contract, division, rules),
+      source: "live" as const,
     };
   });
 }

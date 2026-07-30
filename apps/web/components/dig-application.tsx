@@ -38,6 +38,8 @@ interface ContractHit {
   baseAmount: number;
   status: string;
   suggestedDig: number;
+  /** db=同期済みキャッシュ / live=契約管理DBを直接参照 */
+  source: "db" | "live";
 }
 
 interface PickerMember {
@@ -132,7 +134,11 @@ export function DigApplicationPanel({
         setMsg("契約管理DBに該当する契約がありません。企業名・契約内容は手入力してください。");
       } else if (found.length === 1) {
         applyHit(found[0]);
-        setMsg("契約管理DBから反映しました。内容を確認して申請してください。");
+        setMsg(
+          found[0].source === "live"
+            ? "契約管理DBを直接参照して反映しました。内容を確認して申請してください。"
+            : "取込済みの契約から反映しました。内容を確認して申請してください。",
+        );
       } else {
         setMsg(`${found.length}件見つかりました。該当の契約を選択してください。`);
       }
