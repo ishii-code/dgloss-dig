@@ -1,3 +1,10 @@
+# [1.27.0](https://github.com/ishii-code/dgloss-dig/compare/v1.26.1...v1.27.0) (2026-07-30)
+
+
+### Features
+
+* **auth:** メールアドレス＋仮パスワードでのログイン（＋権限チェックの穴を修正） ([#71](https://github.com/ishii-code/dgloss-dig/issues/71)) ([665ddb3](https://github.com/ishii-code/dgloss-dig/commit/665ddb372092e3b24ff79ecf38d9992a62c01121))
+
 ## [1.26.1](https://github.com/ishii-code/dgloss-dig/compare/v1.26.0...v1.26.1) (2026-07-30)
 
 
