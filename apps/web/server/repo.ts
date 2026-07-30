@@ -27,6 +27,7 @@ import {
 } from "@dig/core";
 import { prisma } from "./db";
 import {
+  equalsConstantTime,
   generateTemporaryPassword,
   hashPassword,
   validatePassword,
@@ -684,6 +685,14 @@ export async function issueTemporaryPassword(accountId: string, actor: string) {
  */
 export async function verifyCredentials(email: string, password: string) {
   const mail = email.trim().toLowerCase();
+
+  // 初期管理者の緊急ログイン。BOOTSTRAP_ADMIN_EMAIL と BOOTSTRAP_ADMIN_PASSWORD の
+  // 両方が設定され、両方一致したときだけスーパーADMINとして入れる。
+  // パスワードを持つアカウントが1つも無い状態（＝誰もログインできない）から
+  // 抜け出すための出口。使い終わったら Vercel から2つの環境変数を削除する。
+  const boot = await bootstrapAdminLogin(mail, password);
+  if (boot) return boot;
+
   const acc = await prisma.account.findFirst({ where: { email: mail } });
   // 存在しない場合もダミー照合を行い、応答時間からアカウントの有無が分からないようにする。
   const ok = verifyPassword(password, acc?.passwordHash ?? null);
@@ -697,6 +706,44 @@ export async function verifyCredentials(email: string, password: string) {
     role: acc.role,
     personId: acc.personId,
     mustChangePassword: acc.mustChangePassword,
+  };
+}
+
+/**
+ * 初期管理者の緊急ログイン。環境変数で指定したメール・パスワードが一致した場合に
+ * そのアカウントをスーパーADMINとして用意し、パスワード変更を要求する。
+ * 環境変数は Vercel でしか設定できないため、外部から悪用される経路はない。
+ */
+async function bootstrapAdminLogin(mail: string, password: string) {
+  const bootEmail = (process.env.BOOTSTRAP_ADMIN_EMAIL ?? "").trim().toLowerCase();
+  const bootPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD ?? "";
+  if (!bootEmail || !bootPassword) return null;
+  if (mail !== bootEmail) return null;
+  // 総当たりでの推測を避けるため、長さが同じでも定数時間で比較する。
+  if (!equalsConstantTime(password, bootPassword)) return null;
+
+  const existing = await prisma.account.findFirst({ where: { email: mail } });
+  const data = {
+    email: mail,
+    name: existing?.name ?? "初期管理者",
+    role: "SUPER_ADMIN" as const,
+    active: true,
+    // 緊急ログイン後は必ず自分のパスワードへ変更させる。
+    passwordHash: hashPassword(bootPassword),
+    mustChangePassword: true,
+    lastLoginAt: new Date(),
+  };
+  const acc = existing
+    ? await prisma.account.update({ where: { id: existing.id }, data })
+    : await prisma.account.create({ data: { id: mail, ...data, personId: null } });
+  await audit(mail, "account.login.bootstrap", "Account", acc.id, { created: !existing });
+  return {
+    id: acc.id,
+    email: acc.email,
+    name: acc.name,
+    role: acc.role,
+    personId: acc.personId,
+    mustChangePassword: true,
   };
 }
 
