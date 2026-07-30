@@ -1,3 +1,10 @@
+## [1.26.1](https://github.com/ishii-code/dgloss-dig/compare/v1.26.0...v1.26.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **security:** 既定をユーザー権限にし、Basic認証の暫定ゲートを追加 ([#70](https://github.com/ishii-code/dgloss-dig/issues/70)) ([9a912f3](https://github.com/ishii-code/dgloss-dig/commit/9a912f363b01c6c5ce455d2d61f5a3b949e8dec8))
+
 # [1.26.0](https://github.com/ishii-code/dgloss-dig/compare/v1.25.3...v1.26.0) (2026-07-30)
 
 
