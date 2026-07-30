@@ -1,3 +1,10 @@
+# [1.26.0](https://github.com/ishii-code/dgloss-dig/compare/v1.25.3...v1.26.0) (2026-07-30)
+
+
+### Features
+
+* **auth:** Google サインイン（社内ドメイン限定・初回サインインで自動登録） ([#69](https://github.com/ishii-code/dgloss-dig/issues/69)) ([d98a5f9](https://github.com/ishii-code/dgloss-dig/commit/d98a5f95b6986c06617270da99a7e90a062f4f9b))
+
 ## [1.25.3](https://github.com/ishii-code/dgloss-dig/compare/v1.25.2...v1.25.3) (2026-07-30)
 
 
