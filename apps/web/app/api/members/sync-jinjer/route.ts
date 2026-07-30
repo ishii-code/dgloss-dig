@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { error, handle, ok } from "@/server/http";
+import { requireSuperAdmin } from "@/server/guard";
 import { syncFromJinjer } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ const Body = z.object({ actor: z.string().min(1).max(64) });
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireSuperAdmin();
     const b = Body.parse(await req.json());
     try {
       return ok(await syncFromJinjer(b.actor));

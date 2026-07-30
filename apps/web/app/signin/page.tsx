@@ -1,11 +1,13 @@
 import { redirect } from "next/navigation";
+import { AuthError } from "next-auth";
 import { auth, signIn } from "@/auth";
-import { allowedDomains, authEnabled } from "@/auth.config";
+import { allowedDomains, authEnabled, googleEnabled } from "@/auth.config";
 
 export const dynamic = "force-dynamic";
 
 /**
- * サインイン画面（Google・社内ドメイン限定）。
+ * サインイン画面。メールアドレス＋パスワード（管理者が発行した仮パスワード）でログインする。
+ * Google が設定されている場合はそちらも選べる。
  * 認証が未設定のときはそのままダッシュボードへ戻す（従来どおり認証なしで使える）。
  */
 export default async function SignInPage({
@@ -18,7 +20,7 @@ export default async function SignInPage({
   const session = await auth();
   if (session?.user) redirect(from && from.startsWith("/") ? from : "/");
 
-  const domains = allowedDomains().join(" / ");
+  const to = from && from.startsWith("/") ? from : "/";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-surface-panel p-6">
@@ -31,37 +33,91 @@ export default async function SignInPage({
           <span className="text-[15px] font-bold text-ink">Dig評価</span>
         </div>
 
-        <h1 className="mt-6 text-lg font-bold text-ink">サインイン</h1>
+        <h1 className="mt-6 text-lg font-bold text-ink">ログイン</h1>
         <p className="mt-1 text-sm text-ink-muted">
-          社内アカウント（{domains}）の Google でサインインしてください。
-          初回サインイン時に従業員マスタと自動で紐付け、マイページが表示されます。
+          会社のメールアドレスと、管理者から配布されたパスワードを入力してください。
         </p>
 
         {error && (
           <div className="mt-4 rounded-card bg-rose-50 px-3 py-2 text-xs text-semantic-danger">
-            サインインできませんでした。社内アカウント（{domains}）でお試しください。
-            それでも入れない場合は管理者へご連絡ください。
+            メールアドレスまたはパスワードが違います。
+            パスワードが分からない場合は管理者に再発行を依頼してください。
           </div>
         )}
 
         <form
-          action={async () => {
+          action={async (formData: FormData) => {
             "use server";
-            await signIn("google", { redirectTo: from && from.startsWith("/") ? from : "/" });
+            try {
+              await signIn("password", {
+                email: String(formData.get("email") ?? ""),
+                password: String(formData.get("password") ?? ""),
+                redirectTo: to,
+              });
+            } catch (e) {
+              // 認証失敗はエラー表示付きで同じ画面へ戻す（redirect の例外はそのまま投げる）。
+              if (e instanceof AuthError) {
+                redirect(`/signin?error=1&from=${encodeURIComponent(to)}`);
+              }
+              throw e;
+            }
           }}
-          className="mt-6"
+          className="mt-6 space-y-3"
         >
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-ink-muted">メールアドレス</span>
+            <input
+              name="email"
+              type="email"
+              required
+              autoComplete="username"
+              placeholder="you@dgloss.co.jp"
+              className="w-full rounded-card border border-surface-border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-ink-muted">パスワード</span>
+            <input
+              name="password"
+              type="password"
+              required
+              autoComplete="current-password"
+              className="w-full rounded-card border border-surface-border px-3 py-2 text-sm"
+            />
+          </label>
           <button
             type="submit"
             className="w-full rounded-card bg-brand-primary px-4 py-2.5 text-sm font-bold text-white"
           >
-            Google でサインイン
+            ログイン
           </button>
         </form>
 
-        <p className="mt-4 text-[11px] text-ink-faint">
-          ※ 会社メールが従業員マスタに登録されていない場合は氏名で突合します。
-          同姓同名などで自動判定できないときは、管理者がアカウント管理画面で紐付けます。
+        {googleEnabled && (
+          <>
+            <div className="my-5 flex items-center gap-3 text-[11px] text-ink-faint">
+              <span className="h-px flex-1 bg-surface-border" />
+              または
+              <span className="h-px flex-1 bg-surface-border" />
+            </div>
+            <form
+              action={async () => {
+                "use server";
+                await signIn("google", { redirectTo: to });
+              }}
+            >
+              <button
+                type="submit"
+                className="w-full rounded-card border border-surface-border px-4 py-2.5 text-sm font-bold text-ink"
+              >
+                Google でサインイン（{allowedDomains().join(" / ")}）
+              </button>
+            </form>
+          </>
+        )}
+
+        <p className="mt-5 text-[11px] text-ink-faint">
+          ※ 初回は配布された仮パスワードでログインし、その後パスワードの変更を求められます。
         </p>
       </div>
     </main>

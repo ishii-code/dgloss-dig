@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { AssignmentShare } from "@dig/contracts";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { updateAssignment } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -14,6 +15,7 @@ const Body = z.object({
 
 export const PATCH = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) =>
   handle(async () => {
+    await requireAdmin();
     const { id } = await ctx.params;
     const b = Body.parse(await req.json());
     return ok(await updateAssignment(id, b.shares, b.actor));

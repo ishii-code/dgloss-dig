@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { authEnabled } from "@/auth.config";
 import type { Role } from "@dig/contracts";
@@ -14,6 +15,8 @@ export default async function Page() {
   const session = await auth();
   const u = session?.user;
   if (!u?.email) return <Dashboard />;
+  // 仮パスワードのままなら先に変更させる。
+  if (u.mustChangePassword) redirect("/change-password");
   return (
     <Dashboard
       signedIn={{

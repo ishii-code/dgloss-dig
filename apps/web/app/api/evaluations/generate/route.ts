@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { YearMonth } from "@dig/contracts";
 import { z } from "zod";
 import { created, handle } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { ensureInitialLoans, generateEvaluations, pruneEvaluationsOutOfScope } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ const Body = z.object({
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireAdmin();
     const b = Body.parse(await req.json());
     const pruned = await pruneEvaluationsOutOfScope(b.yearMonth, b.actor);
     // 入社時の必須初回借入（自動承認）を未作成のメンバーに作成してから台帳を計算する。

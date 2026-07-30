@@ -8,6 +8,8 @@ declare module "next-auth" {
       personId?: string | null;
       accountId?: string;
       matchedBy?: string;
+      /** 仮パスワードのため変更が必要か */
+      mustChangePassword?: boolean;
     } & DefaultSession["user"];
   }
 }
@@ -18,5 +20,6 @@ declare module "next-auth/jwt" {
     personId?: string | null;
     accountId?: string;
     matchedBy?: string;
+    mustChangePassword?: boolean;
   }
 }

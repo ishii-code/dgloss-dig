@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { YearMonth } from "@dig/contracts";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { setSurplusChoice } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ const Body = z.object({
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireAdmin();
     const b = Body.parse(await req.json());
     return ok(await setSurplusChoice(b.yearMonth, b.personId, b.choice, b.actor));
   });

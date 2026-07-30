@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireSuperAdmin } from "@/server/guard";
 import { decideLoan } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ const Body = z.object({
 
 export const POST = (req: NextRequest, ctx: { params: Promise<{ id: string }> }) =>
   handle(async () => {
+    await requireSuperAdmin();
     const { id } = await ctx.params;
     const loanId = z.coerce.number().int().positive().parse(id);
     const body = Body.parse(await req.json());

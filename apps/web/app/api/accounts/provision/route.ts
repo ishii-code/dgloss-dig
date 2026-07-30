@@ -15,6 +15,10 @@ const Body = z.object({
   role: z.enum(["USER", "ADMIN", "SUPER_ADMIN"]).default("USER"),
   /** true なら jinjer にメールが無い人は仮メールを作らずスキップする */
   requireRealEmail: z.boolean().default(false),
+  /** true なら各自の仮パスワードを生成する（平文は応答でのみ返す） */
+  issuePasswords: z.boolean().default(false),
+  /** true なら既にパスワードがある人も再発行する */
+  resetExisting: z.boolean().default(false),
 });
 
 // 在籍メンバーへアカウントを一括発行（既定は USER 権限・既存の権限は変更しない）。
@@ -31,6 +35,8 @@ export const POST = (req: NextRequest) =>
         divisions,
         role: body.role,
         requireRealEmail: body.requireRealEmail,
+        issuePasswords: body.issuePasswords,
+        resetExisting: body.resetExisting,
       })),
     });
   });

@@ -163,6 +163,12 @@ model Account {
   role      Role     @default(USER)
   personId  String? // 従業員マスタとの紐付け（任意）
   active    Boolean  @default(true)
+  /// パスワードのハッシュ（scrypt・平文は保存しない）。未設定はパスワードログイン不可
+  passwordHash String?
+  /// 仮パスワードの状態。true なら初回ログイン時にパスワード変更を強制する
+  mustChangePassword Boolean @default(false)
+  /// 最終ログイン日時（運用確認用）
+  lastLoginAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

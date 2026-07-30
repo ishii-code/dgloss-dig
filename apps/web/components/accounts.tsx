@@ -40,6 +40,7 @@ interface ProvisionResult {
   updated: number;
   skipped: { personId: string; name: string; reason: string }[];
   placeholders: { personId: string; name: string; email: string }[];
+  credentials: { personId: string; name: string; email: string; temporaryPassword: string }[];
 }
 
 function roleStyle(role: Role): string {
@@ -116,9 +117,12 @@ export function AccountsAdmin() {
   }, []);
 
   // 在籍メンバーへユーザー権限のアカウントを一括発行（既存アカウントの権限は変更しない）。
-  async function provision(scope: "target" | "all") {
+  async function provision(scope: "target" | "all", reset = false) {
     const label = scope === "target" ? "評価対象事業部" : "全在籍メンバー";
-    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントを発行します。よろしいですか？`)) return;
+    const note = reset
+      ? "\n※ 既にパスワードを設定済みの人も仮パスワードにリセットされます。"
+      : "\n※ 既にパスワードがある人は変更しません。";
+    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントと仮パスワードを発行します。${note}\nよろしいですか？`)) return;
     setBusy(true);
     setMsg(`${label}のアカウントを発行中…`);
     try {
@@ -126,15 +130,48 @@ export function AccountsAdmin() {
         actor: ACTOR,
         scope,
         role: "USER",
+        // 各自の仮パスワードを同時に生成する（平文は応答でのみ受け取る）。
+        issuePasswords: true,
+        resetExisting: reset,
       });
       setResult(res);
       const parts = [`対象${res.targets}名`, `新規${res.created}件`, `既存${res.updated}件（権限は変更なし）`];
+      parts.push(`仮パスワード発行${res.credentials.length}件`);
       if (res.placeholders.length > 0) parts.push(`仮メール${res.placeholders.length}件（要修正）`);
       if (res.skipped.length > 0) parts.push(`スキップ${res.skipped.length}件`);
       setMsg(`アカウント発行完了: ${parts.join(" / ")}`);
       await load();
     } catch (e) {
       setMsg(`発行失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // 1名の仮パスワードを再発行する（平文は画面に一度だけ表示される）。
+  async function reissue(id: string, name: string) {
+    if (!confirm(`${name} の仮パスワードを再発行します。現在のパスワードは使えなくなります。よろしいですか？`)) return;
+    setBusy(true);
+    try {
+      const r = await apiSend<{ email: string; name: string; temporaryPassword: string }>(
+        `/api/accounts/${encodeURIComponent(id)}/password`,
+        "POST",
+        { actor: ACTOR },
+      );
+      setResult({
+        scope: "single",
+        divisions: null,
+        targets: 1,
+        created: 0,
+        updated: 1,
+        skipped: [],
+        placeholders: [],
+        credentials: [{ personId: "", name: r.name, email: r.email, temporaryPassword: r.temporaryPassword }],
+      });
+      setMsg(`${r.name} の仮パスワードを再発行しました。下の一覧から控えて本人へ渡してください。`);
+      await load();
+    } catch (e) {
+      setMsg(`再発行失敗: ${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -206,7 +243,60 @@ export function AccountsAdmin() {
           >
             全在籍メンバーに発行
           </button>
+          <button
+            onClick={() => void provision("all", true)}
+            disabled={busy}
+            className="rounded-card border border-semantic-warn px-4 py-1.5 text-sm font-bold text-semantic-warn disabled:opacity-50"
+          >
+            全員の仮パスワードを再発行
+          </button>
         </div>
+
+        {result && result.credentials.length > 0 && (
+          <div className="mt-4 rounded-card border border-brand-primary bg-blue-50 p-3">
+            <div className="mb-1 text-sm font-semibold text-brand-primary">
+              発行した仮パスワード {result.credentials.length}件
+            </div>
+            <div className="mb-2 text-xs text-ink-muted">
+              パスワードはハッシュ化して保存されるため、<b>この画面を閉じると二度と表示できません</b>。
+              コピーまたはCSVで控えて各自へ配布してください。本人は初回ログイン後にパスワード変更を求められます。
+            </div>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button
+                onClick={() => copyCredentials(result.credentials)}
+                className="rounded-card bg-brand-primary px-3 py-1 text-xs font-semibold text-white"
+              >
+                一覧をコピー
+              </button>
+              <button
+                onClick={() => downloadCredentials(result.credentials)}
+                className="rounded-card border border-brand-primary px-3 py-1 text-xs font-semibold text-brand-primary"
+              >
+                CSVをダウンロード
+              </button>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-card bg-white">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-surface-border bg-surface-panel text-left text-ink-muted">
+                    <th className="px-2 py-1.5 font-semibold">氏名</th>
+                    <th className="px-2 py-1.5 font-semibold">ログインID（メール）</th>
+                    <th className="px-2 py-1.5 font-semibold">仮パスワード</th>
+                  </tr>
+                </thead>
+                <tbody className="tabular">
+                  {result.credentials.map((c) => (
+                    <tr key={c.email} className="border-b border-surface-border last:border-0">
+                      <td className="px-2 py-1.5">{c.name}</td>
+                      <td className="px-2 py-1.5 text-ink-muted">{c.email}</td>
+                      <td className="px-2 py-1.5 font-mono font-semibold text-ink">{c.temporaryPassword}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {result && (result.placeholders.length > 0 || result.skipped.length > 0) && (
           <div className="mt-3 space-y-2 text-xs">
@@ -309,6 +399,7 @@ export function AccountsAdmin() {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-center">
+                  <button onClick={() => void reissue(a.id, a.name)} className="mr-2 text-xs font-semibold text-semantic-warn">仮PW発行</button>
                   <button onClick={() => setForm(a)} className="mr-2 text-xs font-semibold text-brand-primary">編集</button>
                   <button onClick={() => del(a.id)} className="text-xs text-semantic-danger">削除</button>
                 </td>
@@ -339,6 +430,27 @@ export function AccountsAdmin() {
       <style>{`.inp{width:100%;border:1px solid #E2E8F0;border-radius:8px;padding:6px 8px;font-size:13px}`}</style>
     </>
   );
+}
+
+type Credential = { personId: string; name: string; email: string; temporaryPassword: string };
+
+/** 仮パスワード一覧をタブ区切りでクリップボードへ（チャット等へ貼りやすい形）。 */
+function copyCredentials(rows: Credential[]) {
+  const text = ["氏名\tログインID\t仮パスワード", ...rows.map((c) => `${c.name}\t${c.email}\t${c.temporaryPassword}`)].join("\n");
+  void navigator.clipboard.writeText(text);
+}
+
+/** 仮パスワード一覧をCSVでダウンロード（Excelで開けるよう BOM 付き）。 */
+function downloadCredentials(rows: Credential[]) {
+  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const csv = ["氏名,ログインID,仮パスワード", ...rows.map((c) => [c.name, c.email, c.temporaryPassword].map(esc).join(","))].join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "dig-temporary-passwords.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function RoleCard({ role, desc }: { role: Role; desc: string }) {
