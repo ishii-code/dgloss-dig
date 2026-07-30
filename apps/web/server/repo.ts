@@ -425,6 +425,113 @@ export async function deleteAccount(id: string, actor: string) {
 /** アカウント一括発行のメール既定ドメイン（jinjer にメールが無い人の補完用）。 */
 const ACCOUNT_EMAIL_DOMAIN = process.env.ACCOUNT_EMAIL_DOMAIN ?? "dgloss.co.jp";
 
+/** 氏名の突合用に空白（半角/全角）を除いて比較する。 */
+const normalizeName = (s: string): string => s.replace(/[\s　]/g, "");
+
+export interface SessionAccount {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  personId: string | null;
+  active: boolean;
+  /** どの方法で従業員マスタと突合したか（画面の案内用） */
+  matchedBy: "account" | "member-email" | "member-name" | "none";
+}
+
+function toSessionAccount(a: {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  personId: string | null;
+  active: boolean;
+}): Omit<SessionAccount, "matchedBy"> {
+  return { id: a.id, email: a.email, name: a.name, role: a.role, personId: a.personId, active: a.active };
+}
+
+/**
+ * サインインしたメールから利用アカウントを解決する（初回サインインで自動登録）。
+ * 突合の優先順位:
+ *   1. Account.email 一致 … 既存の権限をそのまま使う（ADMIN を降格させない）
+ *   2. Member.email（会社メール）一致 … その personId に紐付ける
+ *   3. Member.name 一致 … 氏名で紐付ける（会社メールが未登録の人向け・同姓同名は紐付けない）
+ * 仮メール（従業員ID@ドメイン）で先に発行済みの行があれば、実メールへ差し替える。
+ * どれにも当たらない場合は personId=null の USER として作り、管理画面で紐付け待ちにする。
+ */
+export async function resolveSessionAccount(
+  email: string,
+  displayName: string | null,
+): Promise<SessionAccount> {
+  const mail = email.trim().toLowerCase();
+
+  // 1. 既存アカウント（メール一致）
+  const byEmail = await prisma.account.findFirst({ where: { email: mail } });
+  if (byEmail) {
+    if (!byEmail.active) throw new ConflictError("このアカウントは無効化されています");
+    return { ...toSessionAccount(byEmail), matchedBy: "account" };
+  }
+
+  // 2. 従業員マスタの会社メール一致
+  let member = await prisma.member.findFirst({ where: { email: mail, status: "在籍" } });
+  let matchedBy: SessionAccount["matchedBy"] = member ? "member-email" : "none";
+
+  // 3. 氏名一致（会社メールが未登録の人向け）。同姓同名は自動で決められないため紐付けない。
+  if (!member && displayName) {
+    const target = normalizeName(displayName);
+    const candidates = await prisma.member.findMany({
+      where: { status: "在籍" },
+      select: { personId: true, name: true },
+    });
+    const hits = candidates.filter((m) => normalizeName(m.name) === target);
+    if (hits.length === 1) {
+      member = await prisma.member.findUnique({ where: { personId: hits[0].personId } });
+      matchedBy = "member-name";
+    }
+  }
+
+  const name = member?.name ?? displayName ?? mail;
+
+  if (member) {
+    // 仮メールで発行済みの行があれば実メールへ差し替える（重複行を作らない）。
+    const existing = await prisma.account.findFirst({ where: { personId: member.personId } });
+    if (existing) {
+      const updated = await prisma.account.update({
+        where: { id: existing.id },
+        data: { id: mail, email: mail, name, active: true },
+      });
+      await audit(mail, "account.login.relink", "Account", mail, {
+        from: existing.email,
+        personId: member.personId,
+        matchedBy,
+      });
+      return { ...toSessionAccount(updated), matchedBy };
+    }
+    // 氏名突合で会社メールが未登録だった場合は、従業員マスタ側にも記録しておく。
+    if (!member.email) {
+      await prisma.member.update({ where: { personId: member.personId }, data: { email: mail } });
+    }
+  }
+
+  const created = await prisma.account.create({
+    data: { id: mail, email: mail, name, role: "USER", personId: member?.personId ?? null, active: true },
+  });
+  await audit(mail, "account.login.create", "Account", mail, {
+    personId: member?.personId ?? null,
+    matchedBy,
+  });
+  return { ...toSessionAccount(created), matchedBy };
+}
+
+/** 紐付け待ち（personId 未設定）のアカウント一覧。管理画面で従業員を選んで紐付ける。 */
+export async function listUnlinkedAccounts() {
+  return prisma.account.findMany({
+    where: { personId: null },
+    select: { id: true, email: true, name: true, role: true },
+    orderBy: { name: "asc" },
+  });
+}
+
 export interface ProvisionAccountsResult {
   /** 対象となった在籍メンバー数 */
   targets: number;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { ForbiddenError } from "./guard";
 import { ConflictError, NotFoundError } from "./repo";
 
 function isDecimal(v: unknown): v is { toNumber: () => number } {
@@ -42,6 +43,7 @@ export async function handle(fn: () => Promise<NextResponse>): Promise<NextRespo
     return await fn();
   } catch (e) {
     if (e instanceof z.ZodError) return error(400, e.issues.map((i) => i.message).join(", "));
+    if (e instanceof ForbiddenError) return error(403, e.message);
     if (e instanceof NotFoundError) return error(404, e.message);
     if (e instanceof ConflictError) return error(409, e.message);
     console.error(e); // サーバ側のみ

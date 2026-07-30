@@ -6,10 +6,16 @@ export function Header({
   role,
   onRoleChange,
   roles,
+  signedIn,
+  unlinked,
 }: {
   role: Role;
   onRoleChange: (r: Role) => void;
   roles: Role[];
+  /** サインイン中のアカウント（認証が未設定のときは null） */
+  signedIn?: { name: string; email: string } | null;
+  /** 従業員マスタと紐付いていない（マイページが出せない）状態か */
+  unlinked?: boolean;
 }) {
   return (
     <header className="border-b border-surface-border bg-white">
@@ -25,27 +31,44 @@ export function Header({
           </span>
         </div>
         <div className="flex items-center gap-3 text-xs text-ink-muted">
-          {/* ロール切替（デモ用・本番は Supabase Auth 由来） */}
-          <label className="flex items-center gap-1">
-            <span className="hidden sm:inline">権限</span>
-            <select
-              value={role}
-              onChange={(e) => onRoleChange(e.target.value as Role)}
-              className="rounded-card border border-surface-border px-2 py-1 font-semibold text-ink"
-            >
-              {roles.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABEL[r]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="hidden sm:inline">
-            <span className="mr-1 inline-block h-2 w-2 rounded-full bg-semantic-success align-middle" />
-            takeshi.ishii@dgloss.co.jp
-          </span>
-          <span className="hidden text-brand-primary sm:inline">サインアウト</span>
-          <span className="hidden md:inline">データ更新: 2026-01-31 05:04</span>
+          {signedIn ? (
+            <>
+              <span className="rounded-pill bg-blue-50 px-2 py-0.5 font-semibold text-brand-primary">
+                {ROLE_LABEL[role]}
+              </span>
+              {unlinked && (
+                <span
+                  title="従業員マスタと紐付いていないため、マイページは表示されません。管理者にアカウント管理画面での紐付けを依頼してください。"
+                  className="rounded-pill bg-amber-100 px-2 py-0.5 font-semibold text-semantic-warn"
+                >
+                  従業員未紐付け
+                </span>
+              )}
+              <span className="hidden sm:inline">
+                <span className="mr-1 inline-block h-2 w-2 rounded-full bg-semantic-success align-middle" />
+                {signedIn.name}（{signedIn.email}）
+              </span>
+              <a href="/api/auth/signout" className="hidden text-brand-primary sm:inline">
+                サインアウト
+              </a>
+            </>
+          ) : (
+            /* 認証が未設定のときのみ、権限の動作確認用にロールを切り替えられる。 */
+            <label className="flex items-center gap-1">
+              <span className="hidden sm:inline">権限</span>
+              <select
+                value={role}
+                onChange={(e) => onRoleChange(e.target.value as Role)}
+                className="rounded-card border border-surface-border px-2 py-1 font-semibold text-ink"
+              >
+                {roles.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABEL[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </div>
     </header>

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { error, handle, ok } from "@/server/http";
+import { requireSelfOrAdmin } from "@/server/guard";
 import { getMyPageData } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -17,5 +18,7 @@ export const GET = (req: NextRequest) =>
       .filter((m) => /^\d{4}-\d{2}$/.test(m));
     if (!personId) return error(400, "personId が必要です");
     if (months.length === 0) return error(400, "months が必要です");
+    // 他人の実績・借入は参照できない（ADMIN 以上は可）。
+    await requireSelfOrAdmin(personId);
     return ok(await getMyPageData(personId, months));
   });
