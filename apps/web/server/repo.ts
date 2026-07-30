@@ -428,6 +428,20 @@ const ACCOUNT_EMAIL_DOMAIN = process.env.ACCOUNT_EMAIL_DOMAIN ?? "dgloss.co.jp";
 /** 氏名の突合用に空白（半角/全角）を除いて比較する。 */
 const normalizeName = (s: string): string => s.replace(/[\s　]/g, "");
 
+/**
+ * 初回サインイン時に SUPER_ADMIN として扱うメール（カンマ区切り・SUPER_ADMIN_EMAILS）。
+ * 認証を有効化した直後に管理者が USER で作られ、アカウント管理画面へ入れなくなる
+ * （＝自分を昇格できない）状態を防ぐための出口。
+ */
+function bootstrapSuperAdmins(): string[] {
+  return (process.env.SUPER_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((m) => m.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const isBootstrapSuperAdmin = (mail: string): boolean => bootstrapSuperAdmins().includes(mail);
+
 export interface SessionAccount {
   id: string;
   email: string;
@@ -469,6 +483,15 @@ export async function resolveSessionAccount(
   const byEmail = await prisma.account.findFirst({ where: { email: mail } });
   if (byEmail) {
     if (!byEmail.active) throw new ConflictError("このアカウントは無効化されています");
+    // SUPER_ADMIN_EMAILS に指定されていれば昇格させる（降格はしない）。
+    if (isBootstrapSuperAdmin(mail) && byEmail.role !== "SUPER_ADMIN") {
+      const promoted = await prisma.account.update({
+        where: { id: byEmail.id },
+        data: { role: "SUPER_ADMIN" },
+      });
+      await audit(mail, "account.bootstrap.promote", "Account", byEmail.id, { from: byEmail.role });
+      return { ...toSessionAccount(promoted), matchedBy: "account" };
+    }
     return { ...toSessionAccount(byEmail), matchedBy: "account" };
   }
 
@@ -498,7 +521,13 @@ export async function resolveSessionAccount(
     if (existing) {
       const updated = await prisma.account.update({
         where: { id: existing.id },
-        data: { id: mail, email: mail, name, active: true },
+        data: {
+          id: mail,
+          email: mail,
+          name,
+          active: true,
+          ...(isBootstrapSuperAdmin(mail) ? { role: "SUPER_ADMIN" as const } : {}),
+        },
       });
       await audit(mail, "account.login.relink", "Account", mail, {
         from: existing.email,
@@ -514,7 +543,15 @@ export async function resolveSessionAccount(
   }
 
   const created = await prisma.account.create({
-    data: { id: mail, email: mail, name, role: "USER", personId: member?.personId ?? null, active: true },
+    data: {
+      id: mail,
+      email: mail,
+      name,
+      // 既定はユーザー権限。SUPER_ADMIN_EMAILS の指定だけ例外的に昇格させる。
+      role: isBootstrapSuperAdmin(mail) ? "SUPER_ADMIN" : "USER",
+      personId: member?.personId ?? null,
+      active: true,
+    },
   });
   await audit(mail, "account.login.create", "Account", mail, {
     personId: member?.personId ?? null,
