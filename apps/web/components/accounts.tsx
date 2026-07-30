@@ -19,6 +19,19 @@ interface Account {
 
 const empty: Account = { id: "", email: "", name: "", role: "USER", personId: null, active: true };
 
+interface Unlinked {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+}
+
+interface PickerMember {
+  personId: string;
+  name: string;
+  division: string;
+}
+
 interface ProvisionResult {
   scope: string;
   divisions: string[] | null;
@@ -47,6 +60,10 @@ export function AccountsAdmin() {
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProvisionResult | null>(null);
+  // サインインしたが従業員マスタと自動突合できなかったアカウント（管理者が紐付ける）。
+  const [unlinked, setUnlinked] = useState<Unlinked[]>([]);
+  const [pickerMembers, setPickerMembers] = useState<PickerMember[]>([]);
+  const [linkInput, setLinkInput] = useState<Record<string, string>>({});
 
   async function load() {
     try {
@@ -54,6 +71,44 @@ export function AccountsAdmin() {
       setSource("db");
     } catch {
       setSource("mock");
+    }
+    try {
+      const [u, m] = await Promise.all([
+        apiGet<Unlinked[]>("/api/accounts/unlinked"),
+        apiGet<PickerMember[]>("/api/my-page/members"),
+      ]);
+      setUnlinked(u);
+      setPickerMembers(m);
+    } catch {
+      /* 紐付け待ちの取得失敗は一覧表示に影響させない */
+    }
+  }
+
+  // 紐付け待ちアカウントへ従業員IDを設定する（権限は変更しない）。
+  async function link(a: Unlinked, personId: string) {
+    if (!personId) return;
+    setBusy(true);
+    try {
+      await apiSend("/api/accounts", "POST", {
+        id: a.id,
+        email: a.email,
+        name: pickerMembers.find((m) => m.personId === personId)?.name ?? a.name,
+        role: a.role,
+        personId,
+        active: true,
+        actor: ACTOR,
+      });
+      setMsg(`${a.email} を従業員 ${personId} に紐付けました`);
+      setLinkInput((prev) => {
+        const next = { ...prev };
+        delete next[a.id];
+        return next;
+      });
+      await load();
+    } catch (e) {
+      setMsg(`紐付け失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
     }
   }
   useEffect(() => {
@@ -184,6 +239,46 @@ export function AccountsAdmin() {
           </div>
         )}
       </div>
+
+      {/* 紐付け待ち（サインイン済みだが従業員マスタと突合できなかった人） */}
+      {unlinked.length > 0 && (
+        <div className="mb-4 rounded-card border border-semantic-warn bg-amber-50 p-4">
+          <div className="mb-2 text-sm font-semibold text-semantic-warn">
+            従業員マスタと紐付いていないアカウント {unlinked.length}件
+          </div>
+          <div className="mb-3 text-xs text-ink-muted">
+            サインインはできていますが、会社メール・氏名のどちらでも従業員を特定できませんでした。
+            紐付けるとマイページ（本人の実績・借入・Dig申請）が表示されます。
+          </div>
+          <div className="space-y-2">
+            {unlinked.map((a) => (
+              <div key={a.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="font-medium text-ink">{a.name}</span>
+                <span className="text-ink-muted">{a.email}</span>
+                <select
+                  value={linkInput[a.id] ?? ""}
+                  onChange={(e) => setLinkInput({ ...linkInput, [a.id]: e.target.value })}
+                  className="rounded-card border border-surface-border bg-white px-2 py-1 text-xs"
+                >
+                  <option value="">従業員を選択</option>
+                  {pickerMembers.map((m) => (
+                    <option key={m.personId} value={m.personId}>
+                      {m.name}（{m.personId}／{m.division}）
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => void link(a, linkInput[a.id] ?? "")}
+                  disabled={busy || !linkInput[a.id]}
+                  className="rounded-card bg-brand-primary px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  紐付け
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mb-4 overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
         <table className="w-full text-sm">

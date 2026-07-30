@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { listTargetDivisions, provisionMemberAccounts } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -19,6 +20,7 @@ const Body = z.object({
 // 在籍メンバーへアカウントを一括発行（既定は USER 権限・既存の権限は変更しない）。
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireAdmin();
     const body = Body.parse(await req.json());
     const divisions = body.scope === "target" ? await listTargetDivisions() : undefined;
     return ok({
