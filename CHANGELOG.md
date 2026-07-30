@@ -1,3 +1,10 @@
+# [1.22.0](https://github.com/ishii-code/dgloss-dig/compare/v1.21.0...v1.22.0) (2026-07-30)
+
+
+### Features
+
+* 予算Dig上書き・グループ評価・累計按分・初回借入の運用ルール反映 ([#62](https://github.com/ishii-code/dgloss-dig/issues/62)) ([9fb0370](https://github.com/ishii-code/dgloss-dig/commit/9fb0370f3b6fc8412a47b12b7614c73e95f08ca3))
+
 # [1.21.0](https://github.com/ishii-code/dgloss-dig/compare/v1.20.0...v1.21.0) (2026-07-30)
 
 
