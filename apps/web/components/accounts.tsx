@@ -19,6 +19,16 @@ interface Account {
 
 const empty: Account = { id: "", email: "", name: "", role: "USER", personId: null, active: true };
 
+interface ProvisionResult {
+  scope: string;
+  divisions: string[] | null;
+  targets: number;
+  created: number;
+  updated: number;
+  skipped: { personId: string; name: string; reason: string }[];
+  placeholders: { personId: string; name: string; email: string }[];
+}
+
 function roleStyle(role: Role): string {
   switch (role) {
     case "SUPER_ADMIN":
@@ -35,6 +45,8 @@ export function AccountsAdmin() {
   const [form, setForm] = useState<Account>(empty);
   const [msg, setMsg] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ProvisionResult | null>(null);
 
   async function load() {
     try {
@@ -47,6 +59,31 @@ export function AccountsAdmin() {
   useEffect(() => {
     void load();
   }, []);
+
+  // 在籍メンバーへユーザー権限のアカウントを一括発行（既存アカウントの権限は変更しない）。
+  async function provision(scope: "target" | "all") {
+    const label = scope === "target" ? "評価対象事業部" : "全在籍メンバー";
+    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントを発行します。よろしいですか？`)) return;
+    setBusy(true);
+    setMsg(`${label}のアカウントを発行中…`);
+    try {
+      const res = await apiSend<ProvisionResult>("/api/accounts/provision", "POST", {
+        actor: ACTOR,
+        scope,
+        role: "USER",
+      });
+      setResult(res);
+      const parts = [`対象${res.targets}名`, `新規${res.created}件`, `既存${res.updated}件（権限は変更なし）`];
+      if (res.placeholders.length > 0) parts.push(`仮メール${res.placeholders.length}件（要修正）`);
+      if (res.skipped.length > 0) parts.push(`スキップ${res.skipped.length}件`);
+      setMsg(`アカウント発行完了: ${parts.join(" / ")}`);
+      await load();
+    } catch (e) {
+      setMsg(`発行失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save() {
     if (!form.id || !form.email || !form.name) {
@@ -90,6 +127,63 @@ export function AccountsAdmin() {
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
       )}
       {msg && <div className="mb-3 rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">{msg}</div>}
+
+      {/* 一括発行（従業員マスタ → ユーザー権限アカウント） */}
+      <div className="mb-4 rounded-card border border-surface-border bg-white p-4 shadow-card">
+        <div className="mb-2 text-sm font-semibold text-ink">従業員マスタから一括発行（ユーザー権限）</div>
+        <div className="mb-3 text-xs text-ink-muted">
+          在籍メンバー全員へ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使用し、
+          取得できない人は <span className="tabular">従業員ID@{"dgloss.co.jp"}</span> の仮メールで発行します（下に一覧表示・要修正）。
+          既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => void provision("target")}
+            disabled={busy}
+            className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50"
+          >
+            評価対象事業部のメンバーに発行
+          </button>
+          <button
+            onClick={() => void provision("all")}
+            disabled={busy}
+            className="rounded-card border border-brand-primary px-4 py-1.5 text-sm font-bold text-brand-primary disabled:opacity-50"
+          >
+            全在籍メンバーに発行
+          </button>
+        </div>
+
+        {result && (result.placeholders.length > 0 || result.skipped.length > 0) && (
+          <div className="mt-3 space-y-2 text-xs">
+            {result.placeholders.length > 0 && (
+              <details className="rounded-card bg-amber-50 px-3 py-2 text-semantic-warn">
+                <summary className="cursor-pointer font-semibold">
+                  仮メールで発行した {result.placeholders.length}名（実メールへ修正してください）
+                </summary>
+                <div className="mt-2 space-y-0.5 text-ink-muted">
+                  {result.placeholders.map((p) => (
+                    <div key={p.personId} className="tabular">
+                      {p.personId} {p.name} → {p.email}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {result.skipped.length > 0 && (
+              <details className="rounded-card bg-rose-50 px-3 py-2 text-semantic-danger">
+                <summary className="cursor-pointer font-semibold">発行できなかった {result.skipped.length}名</summary>
+                <div className="mt-2 space-y-0.5 text-ink-muted">
+                  {result.skipped.map((p) => (
+                    <div key={p.personId} className="tabular">
+                      {p.personId} {p.name}（{p.reason}）
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="mb-4 overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
         <table className="w-full text-sm">

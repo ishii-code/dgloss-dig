@@ -109,6 +109,34 @@ export function RulesAndContracts() {
     }
   }
 
+  // 契約管理DB（keiyaku-kanri-next の VIEW）を読み取り専用で取込む。CG-CRM と同じ CONTRACT_DB_URL を使う。
+  async function syncContractDb() {
+    setMsg("契約管理DBから同期中…");
+    try {
+      const res = await apiSend<{
+        skipped?: string;
+        fetched?: number;
+        created?: number;
+        updated?: number;
+        skippedRows?: number;
+        byDivision?: Record<string, number>;
+      }>("/api/contracts/sync", "POST", {});
+      if (res.skipped) {
+        setMsg(`契約管理DB未接続: ${res.skipped}`);
+        return;
+      }
+      const byDiv = Object.entries(res.byDivision ?? {})
+        .map(([d, n]) => `${d} ${n}件`)
+        .join(" / ");
+      setMsg(
+        `契約管理DBから同期完了: 取得${res.fetched}件 → 新規${res.created}／更新${res.updated}${byDiv ? `（${byDiv}）` : ""}`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`同期失敗: ${(e as Error).message}`);
+    }
+  }
+
   async function assignFromSfa() {
     try {
       const res = await apiSend<{ applied: number; total: number; spcrmConnected: boolean }>(
@@ -226,13 +254,20 @@ export function RulesAndContracts() {
         note="契約内容にルールを適用し、担当者へ折半で成果Dig付与。担当者は後から修正可。"
       />
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        <button onClick={syncContractDb} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
+          ①契約管理DBから契約を同期
+        </button>
         <button onClick={assignFromSfa} className="rounded-card border border-brand-primary px-4 py-1.5 text-sm font-bold text-brand-primary">
-          SP_CRMから担当者を自動設定（企業ID→担当者）
+          ②SP_CRMから担当者を自動設定（企業ID→担当者）
         </button>
         <button onClick={reflect} className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white">
-          この月の契約を成果Digに反映
+          ③この月の契約を成果Digに反映
         </button>
         <span className="text-xs text-ink-muted">{contracts.length}件の契約</span>
+      </div>
+      <div className="mb-3 text-[11px] text-ink-faint">
+        ※ 契約管理DB（keiyaku-kanri-next の VIEW cg_customer_master）は読み取り専用で参照します（SELECTのみ・書き込みなし）。
+        CG-CRM と同じ `CONTRACT_DB_URL` を使用し、未設定の場合は同期をスキップします。
       </div>
       <div className="space-y-3">
         {contracts.map((c) => (

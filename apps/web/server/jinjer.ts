@@ -32,6 +32,7 @@ export interface NormalizedEmployee {
   joinedOn: string; // YYYY-MM-DD
   status: string; // 在籍状況（在籍/退職 等）
   basePay: number; // 基本給(月給)（/v1/employees/salaries の salary_units より）
+  email: string; // 会社メール（アカウント発行に使用・取得できなければ空）
 }
 
 /** 役員は Dig 評価の対象外（同期しない）。 */
@@ -169,6 +170,30 @@ function pick(o: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+/** メールアドレスらしい文字列か（アカウント発行の元にするため厳しめに判定）。 */
+function asEmail(v: string): string {
+  const t = v.trim();
+  return /^[^\s@]+@[^\s@.]+\.[^\s@]+$/.test(t) ? t.toLowerCase() : "";
+}
+
+/**
+ * 会社メールを拾う。jinjer の項目名が環境で揺れるため候補キーを順に見る
+ * （company → personal → top-level）。会社用を優先し、私用メールは後ろに置く。
+ */
+const MAIL_KEYS = [
+  "company_mail_address",
+  "company_mail",
+  "business_mail_address",
+  "business_mail",
+  "work_mail_address",
+  "pc_mail_address",
+  "mail_address",
+  "mail",
+  "email",
+  "mail_address1",
+  "private_mail_address",
+];
+
 // Member.position の Prisma enum（Position）に一致する値のみ許可。
 const VALID_POSITIONS = new Set(["部長", "マネージャー", "リーダー", "メンバー"]);
 
@@ -219,6 +244,11 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
   const posRaw = pick(company, "position_name", "position");
   const position = VALID_POSITIONS.has(posRaw) ? posRaw : "メンバー";
 
+  const email =
+    asEmail(pick(company, ...MAIL_KEYS)) ||
+    asEmail(pick(personal, ...MAIL_KEYS)) ||
+    asEmail(pick(o, ...MAIL_KEYS));
+
   // division/basePay は別エンドポイント（affiliations/salaries）で後から補完する。
   return {
     personId,
@@ -230,6 +260,7 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
     joinedOn,
     status,
     basePay: 0,
+    email,
   };
 }
 
