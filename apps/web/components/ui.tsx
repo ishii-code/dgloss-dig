@@ -1,5 +1,6 @@
 import { ROLE_LABEL, type Role } from "@dig/contracts";
 import { man, pct, rankStyle, rateColor } from "@/lib/format";
+import { AccountMenu } from "./account-menu";
 
 // ── ヘッダ（社内システム: ロゴ左上・BRAND §2） ──
 export function Header({
@@ -51,9 +52,7 @@ export function Header({
                 <span className="mr-1 inline-block h-2 w-2 rounded-full bg-semantic-success align-middle" />
                 {signedIn.name}（{signedIn.email}）
               </span>
-              <a href="/api/auth/signout" className="hidden text-brand-primary sm:inline">
-                サインアウト
-              </a>
+              <AccountMenu />
             </>
           ) : allowRoleSwitch ? (
             /* 権限の動作確認用（NEXT_PUBLIC_ALLOW_ROLE_SWITCH=true のときだけ表示）。 */
