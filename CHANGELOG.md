@@ -1,3 +1,10 @@
+## [1.25.3](https://github.com/ishii-code/dgloss-dig/compare/v1.25.2...v1.25.3) (2026-07-30)
+
+
+### Bug Fixes
+
+* **jinjer:** 会社メールのみをアカウントの宛先に採用する ([#68](https://github.com/ishii-code/dgloss-dig/issues/68)) ([d4cd832](https://github.com/ishii-code/dgloss-dig/commit/d4cd8329ede34555f183a7332c583837b8ceb27c))
+
 ## [1.25.2](https://github.com/ishii-code/dgloss-dig/compare/v1.25.1...v1.25.2) (2026-07-30)
 
 
