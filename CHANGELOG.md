@@ -1,3 +1,15 @@
+# [1.29.0](https://github.com/ishii-code/dgloss-dig/compare/v1.28.0...v1.29.0) (2026-07-30)
+
+
+### Bug Fixes
+
+* **accounts:** 仮パスワードの発行を表示中アカウント対象＋分割実行にする ([#74](https://github.com/ishii-code/dgloss-dig/issues/74)) ([b056805](https://github.com/ishii-code/dgloss-dig/commit/b05680515b6cb699614aff94aa238a5581ac4abc))
+
+
+### Features
+
+* **auth:** ヘッダーにサインアウトとパスワード変更を追加 ([#73](https://github.com/ishii-code/dgloss-dig/issues/73)) ([e9dd517](https://github.com/ishii-code/dgloss-dig/commit/e9dd5174af213dde974f7da62d75c88cc02ef0e4))
+
 # [1.28.0](https://github.com/ishii-code/dgloss-dig/compare/v1.27.0...v1.28.0) (2026-07-30)
 
 
