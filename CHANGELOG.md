@@ -1,3 +1,10 @@
+## [1.25.1](https://github.com/ishii-code/dgloss-dig/compare/v1.25.0...v1.25.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **jinjer:** 同期で事業部・役職を上書きしないようにする（＋手入力項目の復元） ([#66](https://github.com/ishii-code/dgloss-dig/issues/66)) ([cb154a1](https://github.com/ishii-code/dgloss-dig/commit/cb154a11dda72d39025098fb082d2c24c8c2bd41))
+
 # [1.25.0](https://github.com/ishii-code/dgloss-dig/compare/v1.24.0...v1.25.0) (2026-07-30)
 
 
