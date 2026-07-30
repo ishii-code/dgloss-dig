@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/ishii-code/dgloss-dig/compare/v1.23.0...v1.24.0) (2026-07-30)
+
+
+### Features
+
+* **dig:** Dig申請の申請・承認フォームをマイページに追加 ([#64](https://github.com/ishii-code/dgloss-dig/issues/64)) ([f6547d5](https://github.com/ishii-code/dgloss-dig/commit/f6547d5f6a1dd4917c76cac33f618728d9037e1e))
+
 # [1.23.0](https://github.com/ishii-code/dgloss-dig/compare/v1.22.0...v1.23.0) (2026-07-30)
 
 
