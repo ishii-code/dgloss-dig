@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/ishii-code/dgloss-dig/compare/v1.17.0...v1.18.0) (2026-07-30)
+
+
+### Features
+
+* **monitor:** 役職ベースを表示し未設定を警告（予算Digの原因を可視化） ([#57](https://github.com/ishii-code/dgloss-dig/issues/57)) ([a465477](https://github.com/ishii-code/dgloss-dig/commit/a465477b91f59d9a7d26a3f8ac836ccf6775326f))
+
 # [1.17.0](https://github.com/ishii-code/dgloss-dig/compare/v1.16.0...v1.17.0) (2026-07-29)
 
 
