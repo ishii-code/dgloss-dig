@@ -15,6 +15,11 @@ interface Account {
   role: Role;
   personId: string | null;
   active: boolean;
+  /** 従業員マスタの事業部（未紐付けは null） */
+  division?: string | null;
+  /** パスワード発行済みか */
+  hasPassword?: boolean;
+  mustChangePassword?: boolean;
 }
 
 const empty: Account = { id: "", email: "", name: "", role: "USER", personId: null, active: true };
@@ -65,6 +70,15 @@ export function AccountsAdmin() {
   const [unlinked, setUnlinked] = useState<Unlinked[]>([]);
   const [pickerMembers, setPickerMembers] = useState<PickerMember[]>([]);
   const [linkInput, setLinkInput] = useState<Record<string, string>>({});
+  // 評価対象の事業部（この事業部のメンバーだけを既定で表示する）。
+  const [targetDivisions, setTargetDivisions] = useState<string[]>([]);
+  const [showAll, setShowAll] = useState(false);
+  const [resetExisting, setResetExisting] = useState(false);
+
+  // 画面に表示するアカウント（既定は評価対象事業部のみ）。
+  const visible = showAll
+    ? accounts
+    : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
 
   async function load() {
     try {
@@ -74,12 +88,14 @@ export function AccountsAdmin() {
       setSource("mock");
     }
     try {
-      const [u, m] = await Promise.all([
+      const [u, m, t] = await Promise.all([
         apiGet<Unlinked[]>("/api/accounts/unlinked"),
         apiGet<PickerMember[]>("/api/my-page/members"),
+        apiGet<{ targets: string[]; all: string[] }>("/api/target-divisions"),
       ]);
       setUnlinked(u);
       setPickerMembers(m);
+      setTargetDivisions(t.targets ?? []);
     } catch {
       /* 紐付け待ちの取得失敗は一覧表示に影響させない */
     }
@@ -150,7 +166,7 @@ export function AccountsAdmin() {
    * （全件を1リクエストで処理すると実行時間制限でタイムアウトする）。
    */
   async function issuePasswordsForDisplayed(reset: boolean) {
-    const ids = accounts.map((a) => a.id);
+    const ids = visible.map((a) => a.id);
     if (ids.length === 0) {
       setMsg("表示中のアカウントがありません");
       return;
@@ -287,46 +303,80 @@ export function AccountsAdmin() {
         </div>
       )}
 
-      {/* 一括発行（従業員マスタ → ユーザー権限アカウント） */}
+      {/* 仮パスワードの発行（表示中のアカウントが対象） */}
       <div className="mb-4 rounded-card border border-surface-border bg-white p-4 shadow-card">
-        <div className="mb-2 text-sm font-semibold text-ink">従業員マスタから一括発行（ユーザー権限）</div>
-        <div className="mb-3 text-xs text-ink-muted">
-          在籍メンバー全員へ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使用し、
-          取得できない人は <span className="tabular">従業員ID@{"dgloss.co.jp"}</span> の仮メールで発行します（下に一覧表示・要修正）。
-          既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
-          仮パスワードは<b>下の一覧に表示中のアカウント</b>に対して発行します（25名ずつ分割して実行するため、
-          人数が多くてもタイムアウトしません）。既にパスワードがある人は「再発行」を選んだときだけ作り直します。
+        <div className="mb-2 flex flex-wrap items-center gap-3">
+          <span className="text-sm font-semibold text-ink">表示対象</span>
+          <label className="flex items-center gap-1.5 text-sm">
+            <input
+              type="radio"
+              checked={!showAll}
+              onChange={() => setShowAll(false)}
+            />
+            評価対象事業部のみ
+            <span className="text-xs text-ink-faint">
+              （{targetDivisions.length > 0 ? targetDivisions.join("・") : "未設定"}）
+            </span>
+          </label>
+          <label className="flex items-center gap-1.5 text-sm">
+            <input type="radio" checked={showAll} onChange={() => setShowAll(true)} />
+            全アカウント
+          </label>
+          <span className="text-xs text-ink-muted">
+            表示中 {visible.length}名 / 全{accounts.length}名
+          </span>
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        <div className="mb-3 flex flex-wrap items-center gap-3">
           <button
-            onClick={() => void provision("target")}
-            disabled={busy}
-            className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50"
+            onClick={() => void issuePasswordsForDisplayed(resetExisting)}
+            disabled={busy || visible.length === 0}
+            className="rounded-card bg-brand-accent px-5 py-2 text-sm font-bold text-white disabled:opacity-50"
           >
-            評価対象事業部のメンバーに発行
+            {busy ? "処理中…" : `表示中の ${visible.length}名 に仮パスワードを発行`}
           </button>
-          <button
-            onClick={() => void provision("all")}
-            disabled={busy}
-            className="rounded-card border border-brand-primary px-4 py-1.5 text-sm font-bold text-brand-primary disabled:opacity-50"
-          >
-            全在籍メンバーに発行
-          </button>
-          <button
-            onClick={() => void issuePasswordsForDisplayed(false)}
-            disabled={busy}
-            className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50"
-          >
-            表示中のメンバーに仮パスワードを発行
-          </button>
-          <button
-            onClick={() => void issuePasswordsForDisplayed(true)}
-            disabled={busy}
-            className="rounded-card border border-semantic-warn px-4 py-1.5 text-sm font-bold text-semantic-warn disabled:opacity-50"
-          >
-            表示中のメンバーの仮パスワードを再発行
-          </button>
+          <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+            <input
+              type="checkbox"
+              checked={resetExisting}
+              onChange={(e) => setResetExisting(e.target.checked)}
+            />
+            既にパスワードがある人も作り直す
+          </label>
         </div>
+
+        <div className="text-xs text-ink-muted">
+          仮パスワードは<b>上で表示中のアカウント</b>にだけ発行します（25名ずつ分割して実行するため、
+          人数が多くてもタイムアウトしません）。チェックを入れない限り、既にパスワードがある人は据え置きます。
+          発行した平文は<b>この画面でしか見られません</b>。必ずコピーかCSVで控えてください。
+        </div>
+
+        <details className="mt-3 text-xs text-ink-muted">
+          <summary className="cursor-pointer font-semibold text-ink">
+            従業員マスタからアカウントを作成する（新入社員が増えたとき）
+          </summary>
+          <div className="mt-2">
+            在籍メンバーへ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使い、
+            取得できない人は <span className="tabular">従業員ID@dgloss.co.jp</span> の仮メールで作ります（下に要修正として表示）。
+            既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                onClick={() => void provision("target")}
+                disabled={busy}
+                className="rounded-card border border-brand-primary px-3 py-1 font-semibold text-brand-primary disabled:opacity-50"
+              >
+                評価対象事業部のメンバー
+              </button>
+              <button
+                onClick={() => void provision("all")}
+                disabled={busy}
+                className="rounded-card border border-surface-border px-3 py-1 font-semibold text-ink-muted disabled:opacity-50"
+              >
+                全在籍メンバー
+              </button>
+            </div>
+          </div>
+        </details>
 
         {result && result.credentials.length > 0 && (
           <div className="mt-4 rounded-card border border-brand-primary bg-blue-50 p-3">
@@ -452,23 +502,44 @@ export function AccountsAdmin() {
             <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
               <th className="px-4 py-2.5 font-semibold">氏名</th>
               <th className="px-4 py-2.5 font-semibold">メール</th>
+              <th className="px-4 py-2.5 font-semibold">事業部</th>
               <th className="px-4 py-2.5 font-semibold">権限</th>
               <th className="px-4 py-2.5 font-semibold">従業員ID</th>
+              <th className="px-4 py-2.5 text-center font-semibold">パスワード</th>
               <th className="px-4 py-2.5 text-center font-semibold">状態</th>
               <th className="px-4 py-2.5 text-center font-semibold">操作</th>
             </tr>
           </thead>
           <tbody className="tabular">
-            {accounts.map((a) => (
+            {visible.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-3 text-ink-muted">
+                  表示できるアカウントがありません（評価対象事業部の設定、または従業員IDの紐付けをご確認ください）
+                </td>
+              </tr>
+            )}
+            {visible.map((a) => (
               <tr key={a.id} className="border-b border-surface-border last:border-0">
                 <td className="px-4 py-2.5 font-medium text-ink">{a.name}</td>
                 <td className="px-4 py-2.5 text-ink-muted">{a.email}</td>
+                <td className="px-4 py-2.5 text-ink-muted">{a.division ?? "—"}</td>
                 <td className="px-4 py-2.5">
                   <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${roleStyle(a.role)}`}>
                     {ROLE_LABEL[a.role]}
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-ink-muted">{a.personId ?? "—"}</td>
+                <td className="px-4 py-2.5 text-center text-xs">
+                  {a.hasPassword ? (
+                    a.mustChangePassword ? (
+                      <span className="text-semantic-warn">仮パスワード</span>
+                    ) : (
+                      <span className="text-semantic-success">設定済み</span>
+                    )
+                  ) : (
+                    <span className="text-ink-faint">未発行</span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-center">
                   <span className={`text-xs ${a.active ? "text-semantic-success" : "text-ink-faint"}`}>
                     {a.active ? "有効" : "無効"}
