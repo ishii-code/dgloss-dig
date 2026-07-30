@@ -1,3 +1,10 @@
+## [1.19.1](https://github.com/ishii-code/dgloss-dig/compare/v1.19.0...v1.19.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **salary:** 役職ベースを給与レンジ表(役職×A/B/C)から決定するよう修正 ([#59](https://github.com/ishii-code/dgloss-dig/issues/59)) ([e3129f5](https://github.com/ishii-code/dgloss-dig/commit/e3129f55cf3fd62581ce8d07214c3dcad26f8a27))
+
 # [1.19.0](https://github.com/ishii-code/dgloss-dig/compare/v1.18.0...v1.19.0) (2026-07-30)
 
 
