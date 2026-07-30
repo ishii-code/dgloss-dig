@@ -26,7 +26,7 @@ export interface NormalizedEmployee {
   personId: string; // 社員番号（jinjer では top-level id）
   name: string;
   division: string; // 事業部/部署（/v1/employees/affiliations の主務 department 名）
-  position: string; // 役職
+  position: string | null; // 役職（jinjer に無ければ null。既存の手入力を上書きしないため）
   employmentType: "正社員" | "アルバイト";
   employmentClassification: string; // jinjer の雇用区分（役員/正社員/アルバイト等）
   joinedOn: string; // YYYY-MM-DD
@@ -242,7 +242,9 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
   // 役職(Position enum: 部長/マネージャー/リーダー/メンバー)。jinjer に役職が無いので、
   // 既知値のときのみ採用し、それ以外（雇用区分など）は既定「メンバー」にする。
   const posRaw = pick(company, "position_name", "position");
-  const position = VALID_POSITIONS.has(posRaw) ? posRaw : "メンバー";
+  // jinjer に役職が無い（または未知の値）ときは null。既定値で上書きしないことで、
+  // Dig評価側で手入力した役職が同期のたびに消えるのを防ぐ。
+  const position = VALID_POSITIONS.has(posRaw) ? posRaw : null;
 
   const email =
     asEmail(pick(company, ...MAIL_KEYS)) ||

@@ -1836,24 +1836,31 @@ export async function syncFromJinjer(actor: string) {
     rawSampleKeys,
     rawSample,
   } = await fetchEmployeesForSync();
+  // 万一の誤上書きに備え、同期前の手入力項目を監査ログへ退避する（「手入力項目を復元」で戻せる）。
+  await snapshotManualFields(actor);
   let created = 0;
   let updated = 0;
   for (const e of employees) {
     const existing = await prisma.member.findUnique({ where: { personId: e.personId } });
     const joinedOn = new Date(`${e.joinedOn}T00:00:00Z`);
     if (existing) {
-      // 勤怠/所属由来の項目を更新。基本給は jinjer から取れた場合のみ反映（0は既存維持）。
+      // jinjer が正の項目だけ更新する。以下は Dig評価側の設定を正とするため**上書きしない**:
+      //   division / divisionOverride（事業部の紐づけ）, position（役職の手入力）,
+      //   salaryGrade / salaryRow / positionBase（役職ベース）, evaluationCycle, groupLeaderId
+      // 基本給は jinjer から取れた場合のみ反映（0は既存維持）。
       await prisma.member.update({
         where: { personId: e.personId },
         data: {
           name: e.name,
-          division: e.division,
-          position: e.position as Prisma.MemberUpdateInput["position"],
           employmentType: e.employmentType as Prisma.MemberUpdateInput["employmentType"],
           joinedOn,
           status: "在籍",
           ...(e.basePay > 0 ? { basePay: e.basePay } : {}),
           ...(e.email ? { email: e.email } : {}),
+          // jinjer 側の所属名は「紐づけの原本」としてのみ保持し、division は後段でルール再適用する。
+          ...(e.division ? { jinjerTeam: e.division } : {}),
+          // 役職は jinjer に値がある場合のみ反映（無ければ手入力を維持）。
+          ...(e.position ? { position: e.position as Prisma.MemberUpdateInput["position"] } : {}),
         },
       });
       updated += 1;
@@ -1864,7 +1871,8 @@ export async function syncFromJinjer(actor: string) {
           name: e.name,
           email: e.email || null,
           division: e.division,
-          position: e.position as Prisma.MemberCreateInput["position"],
+          jinjerTeam: e.division || null,
+          position: (e.position ?? "メンバー") as Prisma.MemberCreateInput["position"],
           jobType: null,
           employmentType: e.employmentType as Prisma.MemberCreateInput["employmentType"],
           basePay: e.basePay,
@@ -1887,6 +1895,9 @@ export async function syncFromJinjer(actor: string) {
     retiredInDb = res.count;
   }
 
+  // 事業部は個別指定 → 紐づけルール の順で復元する（同期で失われないようにする）。
+  const divisionsRestored = await reapplyDivisionRules(actor);
+
   await audit(actor, "member.sync.jinjer", "Member", null, {
     connected,
     fetched,
@@ -1896,6 +1907,8 @@ export async function syncFromJinjer(actor: string) {
     executiveCount,
     retiredInDb,
     excluded: excluded.length,
+    divisionsRestored: divisionsRestored.restored,
+    divisionsReapplied: divisionsRestored.updated,
   });
   return {
     connected,
@@ -1908,6 +1921,9 @@ export async function syncFromJinjer(actor: string) {
     departmentCounts,
     created,
     updated,
+    // 事業部の復元内訳（個別指定の復元／紐づけルールの再適用）
+    divisionsRestored: divisionsRestored.restored,
+    divisionsReapplied: divisionsRestored.updated,
     synced: employees.length,
     excludedDivisions: EXCLUDED_DIVISIONS,
     excludedCount: excluded.length,
@@ -1915,6 +1931,103 @@ export async function syncFromJinjer(actor: string) {
     rawSampleKeys,
     rawSample: parsed === 0 ? rawSample : null,
   };
+}
+
+/** 手入力で管理している項目（同期で上書きしてはいけないもの）。 */
+interface ManualFieldsRow {
+  personId: string;
+  name: string;
+  division: string;
+  divisionOverride: string | null;
+  jinjerTeam: string | null;
+  position: string;
+  salaryGrade: string | null;
+  salaryRow: number | null;
+  positionBase: number;
+  evaluationCycle: string;
+  groupLeaderId: string | null;
+}
+
+/**
+ * 手入力項目のスナップショットを監査ログへ保存する（誤上書きからの復旧用）。
+ * jinjer 同期の直前に自動で呼ばれる。
+ */
+export async function snapshotManualFields(actor: string) {
+  const members = await prisma.member.findMany({
+    where: { status: "在籍" },
+    select: {
+      personId: true, name: true, division: true, divisionOverride: true, jinjerTeam: true,
+      position: true, salaryGrade: true, salaryRow: true, positionBase: true,
+      evaluationCycle: true, groupLeaderId: true,
+    },
+    orderBy: { personId: "asc" },
+  });
+  const rows: ManualFieldsRow[] = members.map((m) => ({
+    personId: m.personId,
+    name: m.name,
+    division: m.division,
+    divisionOverride: m.divisionOverride,
+    jinjerTeam: m.jinjerTeam,
+    position: m.position,
+    salaryGrade: m.salaryGrade,
+    salaryRow: m.salaryRow,
+    positionBase: m.positionBase.toNumber(),
+    evaluationCycle: m.evaluationCycle,
+    groupLeaderId: m.groupLeaderId,
+  }));
+  await audit(actor, "member.manual.snapshot", "Member", null, {
+    count: rows.length,
+    rows: rows as unknown as Prisma.InputJsonValue,
+  });
+  return { count: rows.length };
+}
+
+/**
+ * 直近のスナップショットから手入力項目（事業部・役職・レンジ・役職ベース・サイクル・グループ）を
+ * 復元する。誤って同期で上書きしてしまった場合の巻き戻しに使う。
+ */
+export async function restoreManualFields(actor: string) {
+  const log = await prisma.auditLog.findFirst({
+    where: { action: "member.manual.snapshot" },
+    orderBy: { id: "desc" },
+  });
+  const detail = log?.detail as { rows?: ManualFieldsRow[] } | null;
+  const rows = detail?.rows ?? [];
+  if (rows.length === 0) throw new NotFoundError("復元できるスナップショットがありません");
+
+  let restored = 0;
+  let missing = 0;
+  for (const r of rows) {
+    const exists = await prisma.member.findUnique({
+      where: { personId: r.personId },
+      select: { personId: true },
+    });
+    if (!exists) {
+      missing += 1;
+      continue;
+    }
+    await prisma.member.update({
+      where: { personId: r.personId },
+      data: {
+        division: r.division,
+        divisionOverride: r.divisionOverride,
+        jinjerTeam: r.jinjerTeam,
+        position: r.position as Prisma.MemberUpdateInput["position"],
+        salaryGrade: r.salaryGrade,
+        salaryRow: r.salaryRow,
+        positionBase: r.positionBase,
+        evaluationCycle: r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"],
+        groupLeaderId: r.groupLeaderId,
+      },
+    });
+    restored += 1;
+  }
+  await audit(actor, "member.manual.restore", "Member", null, {
+    snapshotAt: log?.createdAt ?? null,
+    restored,
+    missing,
+  });
+  return { restored, missing, total: rows.length, snapshotAt: log?.createdAt ?? null };
 }
 
 /**
@@ -2015,8 +2128,19 @@ export async function reapplyDivisionRules(actor: string) {
     select: { personId: true, division: true, jinjerTeam: true, divisionOverride: true },
   });
   let updated = 0;
+  let restored = 0;
   for (const m of members) {
-    if (m.divisionOverride) continue; // 個別指定は保持
+    // 個別指定がある人は、その値を division へ確実に戻す（同期等でズレても復元できるように）。
+    if (m.divisionOverride) {
+      if (m.divisionOverride !== m.division) {
+        await prisma.member.update({
+          where: { personId: m.personId },
+          data: { division: m.divisionOverride },
+        });
+        restored += 1;
+      }
+      continue;
+    }
     const team = m.jinjerTeam ?? m.division;
     const next = applyDivisionRules(team, rules, m.division);
     if (next && next !== m.division) {
@@ -2024,8 +2148,8 @@ export async function reapplyDivisionRules(actor: string) {
       updated += 1;
     }
   }
-  await audit(actor, "division.rule.reapply", "Member", null, { updated, rules: rules.length });
-  return { updated, total: members.length, rules: rules.length };
+  await audit(actor, "division.rule.reapply", "Member", null, { updated, restored, rules: rules.length });
+  return { updated, restored, total: members.length, rules: rules.length };
 }
 
 /**

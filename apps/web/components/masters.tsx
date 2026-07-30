@@ -80,20 +80,46 @@ export function MemberMaster() {
       setMsg(`保存失敗: ${(e as Error).message}`);
     }
   }
+  // 直前の同期前スナップショットへ手入力項目（事業部・役職・役職ベース等）を巻き戻す。
+  async function restoreManual() {
+    if (syncing) return;
+    if (!confirm("直前の jinjer 同期前の状態へ、事業部・役職・レンジ・役職ベース・評価サイクル・グループ長を巻き戻します。よろしいですか？")) return;
+    setSyncing(true);
+    setMsg("⏳ 手入力項目を復元中…");
+    try {
+      const r = await apiSend<{ restored: number; missing: number; total: number; snapshotAt: string | null }>(
+        "/api/members/restore-manual",
+        "POST",
+        { actor: ACTOR },
+      );
+      setMsg(
+        `手入力項目を復元しました: ${r.restored}/${r.total}名${r.missing > 0 ? `（マスタに居ない${r.missing}名はスキップ）` : ""}` +
+          `${r.snapshotAt ? `\n退避時点: ${r.snapshotAt.slice(0, 19).replace("T", " ")}` : ""}` +
+          `\n評価台帳は「評価台帳を再計算」で反映してください。`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`復元失敗: ${(e as Error).message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function syncJinjer() {
     if (syncing) return;
-    if (!confirm("jinjer から在籍の従業員マスタを同期します（在籍者・所属部署・基本給を取得。退職者は除外）。取得件数が多いと最大1分ほどかかります。よろしいですか？")) return;
+    if (!confirm("jinjer から在籍の従業員マスタを同期します（在籍者・氏名・雇用区分・入社日・基本給を取得。退職者は除外）。\n事業部の紐づけ・役職・役職ベースは上書きしません（同期前の状態を自動退避します）。\n取得件数が多いと最大1分ほどかかります。よろしいですか？")) return;
     setSyncing(true);
     setMsg("⏳ jinjer同期中…（従業員・所属・給与を取得中。最大1分ほどかかります。完了までこのままお待ちください）");
     try {
-      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; executiveCount?: number; retiredInDb?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
+      const r = await apiSend<{ connected: boolean; fetched: number; parsed: number; activeCount?: number; retiredCount?: number; executiveCount?: number; retiredInDb?: number; departmentCounts?: Record<string, number>; created: number; updated: number; synced: number; excludedCount: number; divisionsRestored?: number; divisionsReapplied?: number; rawSampleKeys?: string[]; rawSample?: Record<string, unknown> | null }>(
         "/api/members/sync-jinjer",
         "POST",
         { actor: ACTOR },
       );
       let msg = `jinjer同期完了${r.connected ? "（API直結）" : "（サンプル：キー未設定）"}: 取得${r.fetched}件（在籍${r.activeCount ?? "-"}／退職除外${r.retiredCount ?? "-"}／役員除外${r.executiveCount ?? "-"}）→取込${r.synced}名（新規${r.created}/更新${r.updated}）`;
       if (r.retiredInDb && r.retiredInDb > 0) msg += `\n評価対象外（退職・役員）${r.retiredInDb}名を一覧から外しました。`;
-      msg += `\n次に「② 部署・給与を反映」を押すと所属部署と基本給が入ります。`;
+      msg += `\n事業部・役職・役職ベースは上書きしていません（個別指定の復元${r.divisionsRestored ?? 0}名／紐づけルール再適用${r.divisionsReapplied ?? 0}名）。`;
+      msg += `\n基本給を更新したい場合は「② 部署・給与を反映」を押してください。`;
       // 取得はあるのに取込0＝項目名のマッピング不一致。診断情報を表示。
       if (r.fetched > 0 && r.parsed === 0) {
         msg += `\n【診断】項目名: ${(r.rawSampleKeys ?? []).join(", ")}`;
@@ -212,7 +238,14 @@ export function MemberMaster() {
         <button onClick={probeSalaryLabels} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           給与項目を確認
         </button>
-        <span className="text-xs text-ink-muted">jinjer の在籍者を取込（退職者は除外）。事業部/部署・給与は jinjer 従業員APIに無いため別途設定。給与は既存を保持。</span>
+        <button onClick={restoreManual} disabled={syncing} className="rounded-card border border-semantic-warn px-3 py-1.5 text-sm font-semibold text-semantic-warn disabled:opacity-60">
+          手入力項目を復元（同期前に戻す）
+        </button>
+      </div>
+      <div className="mb-3 text-[11px] text-ink-faint">
+        ① は jinjer が正の項目（氏名・雇用区分・入社日・会社メール・基本給）だけを更新します。
+        <b>事業部の紐づけ・役職・レンジ・役職ベース・評価サイクル・グループ長は上書きしません</b>
+        （同期の直前に自動退避するため、万一ズレた場合は「手入力項目を復元」で直前の状態に戻せます）。
       </div>
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
