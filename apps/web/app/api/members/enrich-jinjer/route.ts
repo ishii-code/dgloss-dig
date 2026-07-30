@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { error, handle, ok } from "@/server/http";
+import { requireSuperAdmin } from "@/server/guard";
 import { enrichMembersPage, getDepartmentCounts } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -18,6 +19,7 @@ const Body = z.object({
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireSuperAdmin();
     const b = Body.parse(await req.json());
     try {
       return ok(await enrichMembersPage(b.actor, b.kind, b.page));

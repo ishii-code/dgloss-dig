@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireSuperAdmin } from "@/server/guard";
 import {
   autoAssignSalaryRanges,
   bulkUpdatePositionBase,
@@ -51,6 +52,7 @@ const Body = z.union([
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireSuperAdmin();
     const b = Body.parse(await req.json());
     if ("mode" in b && b.mode === "auto") {
       return ok(await autoAssignSalaryRanges(b.division, b.actor));

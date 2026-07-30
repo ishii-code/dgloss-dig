@@ -4,11 +4,15 @@ import Google from "next-auth/providers/google";
 /**
  * 認証の共通設定（Edge でも読める部分のみ）。
  * DB アクセスを伴うコールバックは auth.ts 側に置く（middleware が Edge で動くため）。
- *
- * env-gated: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / AUTH_SECRET が揃ったときだけ
- * 認証を有効にする。未設定の間は従来どおり認証なしで動作する（本番を壊さない）。
  */
-export const authEnabled = Boolean(
+/**
+ * 認証を有効にするか。AUTH_SECRET があればメール＋パスワードでログインできる。
+ * 未設定の間は従来どおり認証なしで動作する（本番を壊さない）。
+ */
+export const authEnabled = Boolean(process.env.AUTH_SECRET);
+
+/** Google サインインも併用するか（クライアントIDとシークレットが揃っているとき）。 */
+export const googleEnabled = Boolean(
   process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.AUTH_SECRET,
 );
 
@@ -30,8 +34,9 @@ export function isAllowedEmail(email: string | null | undefined): boolean {
 }
 
 export const authConfig = {
-  // 認証未設定のときは provider 無し（＝サインイン不可・middleware も素通り）。
-  providers: authEnabled
+  // Google は任意。メール＋パスワード（Credentials）は auth.ts 側で足す
+  // （DB を参照するため Edge の middleware には載せられない）。
+  providers: googleEnabled
     ? [
         Google({
           clientId: process.env.GOOGLE_CLIENT_ID,
@@ -44,10 +49,11 @@ export const authConfig = {
   session: { strategy: "jwt" },
   pages: { signIn: "/signin", error: "/signin" },
   callbacks: {
-    // 許可ドメイン以外は入れない。
-    signIn({ profile, user }) {
-      const email = profile?.email ?? user?.email ?? null;
-      return isAllowedEmail(email);
+    // Google サインインは許可ドメイン以外を入れない。
+    // メール＋パスワードは管理者が発行したアカウントのみなのでドメイン検証はしない。
+    signIn({ account, profile, user }) {
+      if (account?.provider !== "google") return true;
+      return isAllowedEmail(profile?.email ?? user?.email ?? null);
     },
     // middleware から使う保護判定（Edge 実行・DB は触らない）。
     authorized({ auth }) {

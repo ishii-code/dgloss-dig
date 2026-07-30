@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { YearMonth } from "@dig/contracts";
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { updateAnnualRate } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -15,6 +16,7 @@ const Body = z.object({
 
 export const PATCH = (req: NextRequest) =>
   handle(async () => {
+    await requireAdmin();
     const b = Body.parse(await req.json());
     return ok(await updateAnnualRate(b.yearMonth, b.annualRatePct, b.actor));
   });

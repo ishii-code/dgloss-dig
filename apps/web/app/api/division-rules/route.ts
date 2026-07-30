@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { created, handle, ok } from "@/server/http";
+import { requireAdmin } from "@/server/guard";
 import { listDivisionRules, listTeamMappings, upsertDivisionRule } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -22,6 +23,7 @@ const Body = z.object({
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireAdmin();
     const b = Body.parse(await req.json());
     return created(await upsertDivisionRule(b.pattern.trim(), b.division.trim(), b.actor));
   });

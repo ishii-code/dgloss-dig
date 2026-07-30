@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { MemberSchema } from "@dig/contracts";
 import { z } from "zod";
 import { created, handle, ok } from "@/server/http";
+import { requireSuperAdmin } from "@/server/guard";
 import { listMembers, upsertMember } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -26,6 +27,7 @@ const Body = MemberSchema.pick({
 
 export const POST = (req: NextRequest) =>
   handle(async () => {
+    await requireSuperAdmin();
     const { actor, ...m } = Body.parse(await req.json());
     return created(await upsertMember({ ...m, actor }));
   });

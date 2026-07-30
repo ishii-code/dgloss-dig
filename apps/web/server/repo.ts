@@ -26,6 +26,12 @@ import {
   splitDig,
 } from "@dig/core";
 import { prisma } from "./db";
+import {
+  generateTemporaryPassword,
+  hashPassword,
+  validatePassword,
+  verifyPassword,
+} from "./password";
 
 /** 監査ログ記録 */
 export async function audit(
@@ -542,6 +548,11 @@ export interface ProvisionAccountsResult {
   skipped: { personId: string; name: string; reason: string }[];
   /** jinjer のメールが無く personId から仮メールを生成した人（要修正） */
   placeholders: { personId: string; name: string; email: string }[];
+  /**
+   * 発行した仮パスワード（平文）。この応答でしか取得できない（DBにはハッシュのみ保存）。
+   * 画面で一覧・CSV出力し、各自へ配布したら破棄する。
+   */
+  credentials: { personId: string; name: string; email: string; temporaryPassword: string }[];
 }
 
 /**
@@ -557,6 +568,10 @@ export async function provisionMemberAccounts(input: {
   role?: string;
   /** true なら jinjer にメールが無い人を仮メールで発行しない（skipped に回す） */
   requireRealEmail?: boolean;
+  /** true なら各自の仮パスワードを生成する（既にパスワードがある人は再発行しない） */
+  issuePasswords?: boolean;
+  /** true なら既にパスワードがある人も仮パスワードを再発行する */
+  resetExisting?: boolean;
 }): Promise<ProvisionAccountsResult> {
   const role = (input.role ?? "USER") as Prisma.AccountCreateInput["role"];
   const members = await prisma.member.findMany({
@@ -574,6 +589,7 @@ export async function provisionMemberAccounts(input: {
     updated: 0,
     skipped: [],
     placeholders: [],
+    credentials: [],
   };
 
   for (const m of members) {
@@ -590,17 +606,41 @@ export async function provisionMemberAccounts(input: {
       (await prisma.account.findFirst({ where: { personId: m.personId } })) ??
       (await prisma.account.findFirst({ where: { email } }));
     if (existing) {
+      // パスワード未設定（または再発行指定）のときだけ仮パスワードを発行する。
+      const needPassword =
+        input.issuePasswords === true && (input.resetExisting === true || !existing.passwordHash);
+      const temp = needPassword ? generateTemporaryPassword() : null;
       await prisma.account.update({
         where: { id: existing.id },
-        data: { name: m.name, personId: m.personId, active: true },
+        data: {
+          name: m.name,
+          personId: m.personId,
+          active: true,
+          ...(temp ? { passwordHash: hashPassword(temp), mustChangePassword: true } : {}),
+        },
       });
+      if (temp) {
+        result.credentials.push({ personId: m.personId, name: m.name, email: existing.email, temporaryPassword: temp });
+      }
       result.updated += 1;
       continue;
     }
     try {
+      const temp = input.issuePasswords === true ? generateTemporaryPassword() : null;
       await prisma.account.create({
-        data: { id: email, email, name: m.name, role, personId: m.personId, active: true },
+        data: {
+          id: email,
+          email,
+          name: m.name,
+          role,
+          personId: m.personId,
+          active: true,
+          ...(temp ? { passwordHash: hashPassword(temp), mustChangePassword: true } : {}),
+        },
       });
+      if (temp) {
+        result.credentials.push({ personId: m.personId, name: m.name, email, temporaryPassword: temp });
+      }
       result.created += 1;
     } catch {
       // メール重複などで作れないケースはスキップして続行する。
@@ -616,8 +656,72 @@ export async function provisionMemberAccounts(input: {
     updated: result.updated,
     skipped: result.skipped.length,
     placeholders: result.placeholders.length,
+    // 平文は監査ログにも残さない（件数のみ）。
+    passwordsIssued: result.credentials.length,
   });
   return result;
+}
+
+/**
+ * 1アカウントの仮パスワードを再発行する（平文はこの戻り値のみ・DBはハッシュ）。
+ * 次回ログイン時にパスワード変更を強制する。
+ */
+export async function issueTemporaryPassword(accountId: string, actor: string) {
+  const acc = await prisma.account.findUnique({ where: { id: accountId } });
+  if (!acc) throw new NotFoundError("アカウントが見つかりません");
+  const temp = generateTemporaryPassword();
+  await prisma.account.update({
+    where: { id: accountId },
+    data: { passwordHash: hashPassword(temp), mustChangePassword: true },
+  });
+  await audit(actor, "account.password.issue", "Account", accountId, {});
+  return { id: acc.id, email: acc.email, name: acc.name, temporaryPassword: temp };
+}
+
+/**
+ * メールアドレスとパスワードでログインを検証する。
+ * 成功時は最終ログイン日時を更新し、セッションに載せる情報を返す。
+ */
+export async function verifyCredentials(email: string, password: string) {
+  const mail = email.trim().toLowerCase();
+  const acc = await prisma.account.findFirst({ where: { email: mail } });
+  // 存在しない場合もダミー照合を行い、応答時間からアカウントの有無が分からないようにする。
+  const ok = verifyPassword(password, acc?.passwordHash ?? null);
+  if (!acc || !ok || !acc.active) return null;
+  await prisma.account.update({ where: { id: acc.id }, data: { lastLoginAt: new Date() } });
+  await audit(acc.id, "account.login.password", "Account", acc.id, {});
+  return {
+    id: acc.id,
+    email: acc.email,
+    name: acc.name,
+    role: acc.role,
+    personId: acc.personId,
+    mustChangePassword: acc.mustChangePassword,
+  };
+}
+
+/**
+ * 本人がパスワードを変更する。仮パスワードの状態（mustChangePassword）でも
+ * 現在のパスワードの入力を必須にする（他人が乗っ取れないようにする）。
+ */
+export async function changeOwnPassword(email: string, current: string, next: string) {
+  const mail = email.trim().toLowerCase();
+  const acc = await prisma.account.findFirst({ where: { email: mail } });
+  if (!acc || !acc.active) throw new NotFoundError("アカウントが見つかりません");
+  if (!verifyPassword(current, acc.passwordHash)) {
+    throw new ConflictError("現在のパスワードが違います");
+  }
+  const invalid = validatePassword(next);
+  if (invalid) throw new ConflictError(invalid);
+  if (verifyPassword(next, acc.passwordHash)) {
+    throw new ConflictError("現在と同じパスワードは使用できません");
+  }
+  await prisma.account.update({
+    where: { id: acc.id },
+    data: { passwordHash: hashPassword(next), mustChangePassword: false },
+  });
+  await audit(acc.id, "account.password.change", "Account", acc.id, {});
+  return { id: acc.id };
 }
 
 // ─────────────────────────────────────────────

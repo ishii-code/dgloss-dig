@@ -31,20 +31,37 @@ export function isAdmin(v: Viewer | null): boolean {
   return v !== null && ROLE_LEVEL[v.role] >= ROLE_LEVEL.ADMIN;
 }
 
-/** ADMIN 以上を要求する（認証未設定時は素通り）。 */
-export async function requireAdmin(): Promise<Viewer | null> {
+/**
+ * サインイン済みであることを要求する（認証未設定時は素通り）。
+ * 認証が有効なのにセッションが無い場合は 403 にする（未ログインを「素通り」にしない）。
+ */
+export async function requireSignedIn(): Promise<Viewer | null> {
+  if (!authEnabled) return null; // 認証未設定＝従来どおり制限なし
   const v = await viewer();
-  if (v === null) return null; // 認証未設定
-  if (!isAdmin(v)) throw new ForbiddenError("この操作には ADMIN 以上の権限が必要です");
+  if (!v) throw new ForbiddenError("ログインが必要です");
   return v;
 }
+
+/** 指定レベル以上の権限を要求する（認証未設定時は素通り）。 */
+async function requireLevel(need: number, label: string): Promise<Viewer | null> {
+  const v = await requireSignedIn();
+  if (v === null) return null;
+  if (ROLE_LEVEL[v.role] < need) throw new ForbiddenError(`この操作には ${label} 権限が必要です`);
+  return v;
+}
+
+/** ADMIN 以上を要求する。 */
+export const requireAdmin = () => requireLevel(ROLE_LEVEL.ADMIN, "ADMIN 以上の");
+
+/** スーパーADMIN のみを許可する（従業員マスタ・アカウント管理・金融承認）。 */
+export const requireSuperAdmin = () => requireLevel(ROLE_LEVEL.SUPER_ADMIN, "スーパーADMIN の");
 
 /**
  * 本人（または ADMIN 以上）であることを要求する。
  * 他人の実績・借入・申請を覗けないようにするため、個人データのAPIで使う。
  */
 export async function requireSelfOrAdmin(personId: string): Promise<Viewer | null> {
-  const v = await viewer();
+  const v = await requireSignedIn();
   if (v === null) return null; // 認証未設定
   if (isAdmin(v)) return v;
   if (v.personId && v.personId === personId) return v;
