@@ -1,3 +1,10 @@
+# [1.23.0](https://github.com/ishii-code/dgloss-dig/compare/v1.22.0...v1.23.0) (2026-07-30)
+
+
+### Features
+
+* **mypage:** マイページを追加（四半期推移・借入/返済・ボーナス・インセン） ([#63](https://github.com/ishii-code/dgloss-dig/issues/63)) ([c71a122](https://github.com/ishii-code/dgloss-dig/commit/c71a1223421ef18c9be3a26359c669dc0becd927))
+
 # [1.22.0](https://github.com/ishii-code/dgloss-dig/compare/v1.21.0...v1.22.0) (2026-07-30)
 
 
