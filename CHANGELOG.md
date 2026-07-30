@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/ishii-code/dgloss-dig/compare/v1.18.0...v1.19.0) (2026-07-30)
+
+
+### Features
+
+* **salary:** 給与テーブル(等級×行)から役職ベースを自動設定 ([#58](https://github.com/ishii-code/dgloss-dig/issues/58)) ([aac5b87](https://github.com/ishii-code/dgloss-dig/commit/aac5b878eb089d77bb0aa98a6fd0ab554630316a))
+
 # [1.18.0](https://github.com/ishii-code/dgloss-dig/compare/v1.17.0...v1.18.0) (2026-07-30)
 
 
