@@ -1,3 +1,10 @@
+## [1.29.1](https://github.com/ishii-code/dgloss-dig/compare/v1.29.0...v1.29.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **accounts:** 既定表示を評価対象事業部に絞り、発行ボタンを1つにまとめる ([#75](https://github.com/ishii-code/dgloss-dig/issues/75)) ([82461c8](https://github.com/ishii-code/dgloss-dig/commit/82461c809d3bffb116b0281eb20807565052e17e))
+
 # [1.29.0](https://github.com/ishii-code/dgloss-dig/compare/v1.28.0...v1.29.0) (2026-07-30)
 
 
