@@ -213,6 +213,20 @@ model TargetDivision {
   createdAt DateTime @default(now())
 }
 
+/// 予算Digの月別上書き（運用で個別に予算を指定する場合）。
+/// 設定されていれば計算値より優先される。
+model BudgetOverride {
+  yearMonth        String
+  personId         String
+  monthlyBudgetDig Decimal  @db.Decimal(14, 2)
+  note             String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@id([yearMonth, personId])
+  @@index([yearMonth])
+}
+
 /// メンバーマスタ（要件 F-2）。personId は手入力の Person ID（v1.1 Q4）。
 model Member {
   personId        String          @id

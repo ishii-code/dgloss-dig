@@ -18,6 +18,8 @@ import {
   aggregateSeikaDig,
   buildInitialLoan,
   computeContractDig,
+  cumulativeBudgetElapsed,
+  cumulativeMonths,
   evaluateMonthly,
   evaluationRank,
   splitDig,
@@ -743,6 +745,94 @@ export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: strin
   return { deleted: res.count };
 }
 
+
+/**
+ * 予算Digの確定処理。
+ * - 運用指定（BudgetOverride）があれば単月予算を上書き。
+ * - 累計予算は要件Q7に従い「入社月の翌月から評価月まで（サイクル月数で上限）」で按分。
+ *   例: 8月入社・四半期なら 8月時点の累計対象月数は0、9月で1ヶ月分。
+ */
+function applyBudgetOverride(
+  ev: { monthlyBudgetDig: number; monthly: { actualDig: number }; cumulative: { actualDig: number } },
+  override: number | undefined,
+  cycle: EvaluationCycle,
+  joinedYm: string,
+  targetYm: string,
+) {
+  const cycleLen = cycle === "四半期" ? 3 : 6;
+  const monthlyBudgetDig = typeof override === "number" ? override : ev.monthlyBudgetDig;
+  const months = cumulativeMonths(joinedYm, targetYm, cycleLen);
+  const cumulativeBudgetDig = cumulativeBudgetElapsed(monthlyBudgetDig, months);
+  const monthlyRate = achievementRate(ev.monthly.actualDig, monthlyBudgetDig);
+  const cumulativeRate = achievementRate(ev.cumulative.actualDig, cumulativeBudgetDig);
+  return {
+    monthlyBudgetDig,
+    cumulativeBudgetDig,
+    cumulativeMonths: months,
+    monthlyRate,
+    monthlyRank: evaluationRank(monthlyRate),
+    cumulativeRate,
+    cumulativeRank: evaluationRank(cumulativeRate),
+  };
+}
+
+/**
+ * グループ長の評価をグループ合計（自分＋配下）に更新する。
+ * 配下の予算/実績を合算し、達成率・ランクを再計算する（Q9: 管理職はグループで評価）。
+ */
+async function aggregateGroupEvaluations(yearMonth: string) {
+  const members = await prisma.member.findMany({
+    where: { status: "在籍", groupLeaderId: { not: null } },
+    select: { personId: true, groupLeaderId: true },
+  });
+  if (members.length === 0) return { leaders: 0 };
+  const byLeader = new Map<string, string[]>();
+  for (const m of members) {
+    const leader = m.groupLeaderId!;
+    byLeader.set(leader, [...(byLeader.get(leader) ?? []), m.personId]);
+  }
+
+  let leaders = 0;
+  for (const [leaderId, subIds] of byLeader) {
+    const rows = await prisma.monthlyEvaluation.findMany({
+      where: { yearMonth, personId: { in: [leaderId, ...subIds] } },
+    });
+    const own = rows.find((r) => r.personId === leaderId);
+    if (!own || own.finalized) continue;
+    const subs = rows.filter((r) => r.personId !== leaderId);
+    if (subs.length === 0) continue;
+
+    const monthlyBudget = rows.reduce((a, r) => a + r.monthlyBudgetDig.toNumber(), 0);
+    const cumulativeBudget = rows.reduce((a, r) => a + r.cumulativeBudgetDig.toNumber(), 0);
+    const monthlyActual = rows.reduce((a, r) => a + r.monthlyActualDig.toNumber(), 0);
+    const cumulativeActual = rows.reduce((a, r) => a + r.cumulativeActualDig.toNumber(), 0);
+    const mRate = achievementRate(monthlyActual, monthlyBudget);
+    const cRate = achievementRate(cumulativeActual, cumulativeBudget);
+    await prisma.monthlyEvaluation.update({
+      where: { yearMonth_personId: { yearMonth, personId: leaderId } },
+      data: {
+        monthlyBudgetDig: monthlyBudget,
+        cumulativeBudgetDig: cumulativeBudget,
+        monthlyActualDig: monthlyActual,
+        cumulativeActualDig: cumulativeActual,
+        monthlyRate: mRate,
+        monthlyRank: evaluationRank(mRate),
+        cumulativeRate: cRate,
+        cumulativeRank: evaluationRank(cRate),
+      },
+    });
+    leaders += 1;
+  }
+  return { leaders };
+}
+
+// 初回借入の運用開始日。これより前に入社した既存メンバーは対象外（運用方針）。
+const INITIAL_LOAN_START_DATE = "2026-08-01";
+// 初回借入額＝単月予算Digの何ヶ月分か（運用方針）。
+const INITIAL_LOAN_BUDGET_MONTHS = 1.5;
+// 自動生成した初回借入の識別用（手動申請と区別し、取り消し対象を限定する）。
+const INITIAL_LOAN_NOTE = "入社時 必須初回借入（自動承認・予算1.5ヶ月分）";
+
 /**
  * 入社時の必須初回借入（自動承認）を未作成のメンバーに作成する（要件 F-5・v1.2）。
  * 対象は評価対象事業部の在籍者。yearMonth は入社month（借入が計上される月）。
@@ -750,9 +840,32 @@ export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: strin
  */
 export async function ensureInitialLoans(actor: string) {
   const targets = await listTargetDivisions();
+  const cutoff = new Date(`${INITIAL_LOAN_START_DATE}T00:00:00Z`);
+
+  // 運用開始前に入社した既存メンバーは初回借入の対象外。
+  // 過去に自動作成された分があれば取り消す（申請・承認履歴のない自動生成のみ）。
+  const removed = await prisma.loan.deleteMany({
+    where: {
+      loanType: "初回",
+      note: INITIAL_LOAN_NOTE,
+      borrower: { joinedOn: { lt: cutoff } },
+    },
+  });
+
   const members = await prisma.member.findMany({
-    where: { status: "在籍", ...(targets.length > 0 ? { division: { in: targets } } : {}) },
-    select: { personId: true, joinedOn: true },
+    where: {
+      status: "在籍",
+      joinedOn: { gte: cutoff },
+      ...(targets.length > 0 ? { division: { in: targets } } : {}),
+    },
+    select: {
+      personId: true,
+      joinedOn: true,
+      leftOn: true,
+      positionBase: true,
+      employmentType: true,
+      evaluationCycle: true,
+    },
   });
   const existing = new Set(
     (
@@ -764,6 +877,7 @@ export async function ensureInitialLoans(actor: string) {
   );
 
   let created = 0;
+  let skippedNoBudget = 0;
   for (const m of members) {
     if (existing.has(m.personId)) continue;
     const joinedOn = m.joinedOn.toISOString().slice(0, 10);
@@ -778,6 +892,34 @@ export async function ensureInitialLoans(actor: string) {
       joinedOn,
       setting,
     });
+
+    // 初回借入額＝入社月の単月予算Digの1.5ヶ月分（運用ルール）。
+    // 予算の運用指定があればそれを、無ければ役職ベースから計算した値を使う。
+    const override = await prisma.budgetOverride.findUnique({
+      where: { yearMonth_personId: { yearMonth: ym, personId: m.personId } },
+    });
+    let monthlyBudget = override?.monthlyBudgetDig.toNumber() ?? 0;
+    if (monthlyBudget <= 0) {
+      monthlyBudget = evaluateMonthly({
+        yearMonth: ym,
+        personId: m.personId,
+        employmentType: m.employmentType as EmploymentType,
+        positionBase: m.positionBase.toNumber(),
+        joinedOn,
+        leftOn: m.leftOn ? m.leftOn.toISOString().slice(0, 10) : null,
+        evaluationCycle: m.evaluationCycle as EvaluationCycle,
+        seikaDig: 0,
+        bonusDig: 0,
+        loanDig: 0,
+        setting,
+      }).monthlyBudgetDig;
+    }
+    const principal = Math.round(monthlyBudget * INITIAL_LOAN_BUDGET_MONTHS);
+    if (principal <= 0) {
+      skippedNoBudget += 1;
+      continue; // 予算が未確定（役職ベース未設定等）なら作らない
+    }
+
     await prisma.loan.create({
       data: {
         yearMonth: init.yearMonth,
@@ -785,19 +927,24 @@ export async function ensureInitialLoans(actor: string) {
         lender: init.lender,
         loanType: init.loanType,
         status: init.status,
-        principal: init.principal,
+        principal,
         monthlyRate: init.monthlyRate,
         termMonths: init.termMonths,
         appliedOn: new Date(`${joinedOn}T00:00:00Z`),
         approvedBy: init.approvedBy ?? null,
         approvedOn: new Date(`${joinedOn}T00:00:00Z`),
-        note: init.note ?? null,
+        note: INITIAL_LOAN_NOTE,
       },
     });
     created += 1;
   }
-  await audit(actor, "loan.initial.ensure", "Loan", null, { created, total: members.length });
-  return { created, total: members.length };
+  await audit(actor, "loan.initial.ensure", "Loan", null, {
+    created,
+    removed: removed.count,
+    skippedNoBudget,
+    total: members.length,
+  });
+  return { created, removed: removed.count, skippedNoBudget, total: members.length };
 }
 
 /** 対象月に計上される承認済借入の合計（社員別）。実績Digの借入分。 */
@@ -824,7 +971,7 @@ async function loanDigMapFor(yearMonth: string): Promise<Map<string, number>> {
 export async function generateEvaluations(
   yearMonth: string,
   actor: string,
-): Promise<{ created: number; recalculated: number; skipped: number; total: number }> {
+): Promise<{ created: number; recalculated: number; skipped: number; groupLeaders: number; total: number }> {
   const settingRow =
     (await prisma.setting.findUnique({ where: { yearMonth } })) ??
     (await prisma.setting.create({
@@ -847,6 +994,13 @@ export async function generateEvaluations(
 
   // 対象月に計上される承認済借入（入社時の初回借入を含む）を実績Digへ反映する。
   const loanMap = await loanDigMapFor(yearMonth);
+  // 予算Digの月別上書き（運用指定があれば計算値より優先）。
+  const overrides = new Map(
+    (await prisma.budgetOverride.findMany({ where: { yearMonth } })).map((o) => [
+      o.personId,
+      o.monthlyBudgetDig.toNumber(),
+    ]),
+  );
   // Dig制度の対象事業部に限定（未登録なら全事業部を対象＝従来動作）。
   const targets = await listTargetDivisions();
   const members = await prisma.member.findMany({
@@ -893,6 +1047,13 @@ export async function generateEvaluations(
         loanDig: loan,
         setting,
       });
+      const b = applyBudgetOverride(
+        ev,
+        overrides.get(m.personId),
+        m.evaluationCycle as EvaluationCycle,
+        m.joinedOn.toISOString().slice(0, 7),
+        yearMonth,
+      );
       await prisma.monthlyEvaluation.update({
         where: { yearMonth_personId: { yearMonth, personId: m.personId } },
         data: {
@@ -905,14 +1066,14 @@ export async function generateEvaluations(
           prorationCoefficient: ev.prorationCoefficient,
           seatCost: ev.seatCost,
           totalCost: ev.totalCost,
-          monthlyBudgetDig: ev.monthlyBudgetDig,
-          cumulativeBudgetDig: ev.cumulativeBudgetDig,
+          monthlyBudgetDig: b.monthlyBudgetDig,
+          cumulativeBudgetDig: b.cumulativeBudgetDig,
           monthlyActualDig: ev.monthly.actualDig,
-          monthlyRate: ev.monthly.achievementRate,
-          monthlyRank: ev.monthly.rank,
+          monthlyRate: b.monthlyRate,
+          monthlyRank: b.monthlyRank,
           cumulativeActualDig: ev.cumulative.actualDig,
-          cumulativeRate: ev.cumulative.achievementRate,
-          cumulativeRank: ev.cumulative.rank,
+          cumulativeRate: b.cumulativeRate,
+          cumulativeRank: b.cumulativeRank,
         },
       });
       recalculated += 1;
@@ -934,6 +1095,13 @@ export async function generateEvaluations(
       loanDig: loanMap.get(m.personId) ?? 0,
       setting,
     });
+    const nb = applyBudgetOverride(
+      ev,
+      overrides.get(m.personId),
+      m.evaluationCycle as EvaluationCycle,
+      joinedOn.slice(0, 7),
+      yearMonth,
+    );
     await prisma.monthlyEvaluation.create({
       data: {
         yearMonth,
@@ -947,31 +1115,34 @@ export async function generateEvaluations(
         prorationCoefficient: ev.prorationCoefficient,
         seatCost: ev.seatCost,
         totalCost: ev.totalCost,
-        monthlyBudgetDig: ev.monthlyBudgetDig,
-        cumulativeBudgetDig: ev.cumulativeBudgetDig,
+        monthlyBudgetDig: nb.monthlyBudgetDig,
+        cumulativeBudgetDig: nb.cumulativeBudgetDig,
         seikaDig: ev.seikaDig,
         bonusDig: ev.bonusDig,
         loanDig: ev.loanDig,
         monthlyActualDig: ev.monthly.actualDig,
-        monthlyRate: ev.monthly.achievementRate,
-        monthlyRank: ev.monthly.rank,
+        monthlyRate: nb.monthlyRate,
+        monthlyRank: nb.monthlyRank,
         cumulativeActualDig: ev.cumulative.actualDig,
-        cumulativeRate: ev.cumulative.achievementRate,
-        cumulativeRank: ev.cumulative.rank,
+        cumulativeRate: nb.cumulativeRate,
+        cumulativeRank: nb.cumulativeRank,
         finalized: false,
       },
     });
     created++;
   }
+  // グループ長は自分＋配下の合計で評価する（配下がいる場合のみ）。
+  const grouped = await aggregateGroupEvaluations(yearMonth);
   // 触らなかった＝確定済み。
   const skipped = members.length - created - recalculated;
   await audit(actor, "evaluation.generate", "MonthlyEvaluation", yearMonth, {
     created,
     recalculated,
     skipped,
+    groupLeaders: grouped.leaders,
     total: members.length,
   });
-  return { created, recalculated, skipped, total: members.length };
+  return { created, recalculated, skipped, groupLeaders: grouped.leaders, total: members.length };
 }
 
 // ─────────────────────────────────────────────

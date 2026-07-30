@@ -45,7 +45,7 @@ import { buildMembersFromDb, type EvaluationDto, type MemberDto } from "@/lib/ev
 const TABS: Tab[] = [
   { key: "monitor", label: "予実モニター", sub: "毎日更新" },
   { key: "members", label: "メンバー評価", sub: "月次更新" },
-  { key: "bank", label: "Digloss Bank", sub: "借入・返済" },
+  { key: "bank", label: "Dig Bank", sub: "借入・返済" },
   { key: "borrow-apply", label: "借入申請", sub: "会社/相対" },
   { key: "finance", label: "金融管理", sub: "承認・金利" },
   { key: "rules", label: "Dig獲得ルール", sub: "契約→Dig反映" },
@@ -149,7 +149,7 @@ export default function Page() {
     setGenerating(true);
     setGenMsg(null);
     try {
-      const r = await apiSend<{ created: number; recalculated?: number; skipped: number; total: number; pruned?: number; initialLoansCreated?: number }>(
+      const r = await apiSend<{ created: number; recalculated?: number; skipped: number; total: number; pruned?: number; initialLoansCreated?: number; initialLoansRemoved?: number; groupLeaders?: number }>(
         "/api/evaluations/generate",
         "POST",
         { yearMonth: ym, actor: account.id },
@@ -157,7 +157,9 @@ export default function Page() {
       setGenMsg(
         `${monthLabel(ym)}の評価台帳を更新しました: 新規 ${r.created} 件 / 再計算 ${r.recalculated ?? 0} 件 / 確定済みのため据え置き ${r.skipped} 件（対象 ${r.total} 名）` +
           (r.pruned ? ` / 対象外を削除 ${r.pruned} 件` : "") +
-          (r.initialLoansCreated ? ` / 入社時の初回借入を作成 ${r.initialLoansCreated} 件` : ""),
+          (r.groupLeaders ? ` / グループ長を合算 ${r.groupLeaders} 名` : "") +
+          (r.initialLoansCreated ? ` / 入社時の初回借入を作成 ${r.initialLoansCreated} 件` : "") +
+          (r.initialLoansRemoved ? ` / 対象外の初回借入を取消 ${r.initialLoansRemoved} 件` : ""),
       );
       await loadMembers();
     } catch (e) {

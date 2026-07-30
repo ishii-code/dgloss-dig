@@ -22,5 +22,10 @@ export const POST = (req: NextRequest) =>
     // 入社時の必須初回借入（自動承認）を未作成のメンバーに作成してから台帳を計算する。
     const loans = await ensureInitialLoans(b.actor);
     const result = await generateEvaluations(b.yearMonth, b.actor);
-    return created({ ...result, pruned: pruned.deleted, initialLoansCreated: loans.created });
+    return created({
+      ...result,
+      pruned: pruned.deleted,
+      initialLoansCreated: loans.created,
+      initialLoansRemoved: loans.removed,
+    });
   });

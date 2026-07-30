@@ -161,14 +161,15 @@ export function BigMetricCard({
   const ring = color === "primary" ? "border-surface-border" : "border-violet-200";
   return (
     <div className={`rounded-card border ${ring} bg-white p-6 shadow-card`}>
+      {/* 達成見込みが無いカードでも同じ高さを確保し、金額の縦位置を揃える */}
       <div className="flex items-start justify-between">
         <div className="text-sm text-ink-muted">{label}</div>
-        {rate !== undefined && (
-          <div className="text-right">
-            <div className="text-[11px] text-ink-faint">達成見込み</div>
-            <div className={`text-2xl font-bold ${rateColor(rate)}`}>{pct(rate)}</div>
+        <div className={`text-right ${rate === undefined ? "invisible" : ""}`} aria-hidden={rate === undefined}>
+          <div className="text-[11px] text-ink-faint">達成見込み</div>
+          <div className={`text-2xl font-bold ${rate !== undefined ? rateColor(rate) : ""}`}>
+            {pct(rate ?? 0)}
           </div>
-        )}
+        </div>
       </div>
       <div className="tabular mt-2 text-4xl font-bold text-ink">{value}</div>
       <div className="tabular mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-ink-muted">

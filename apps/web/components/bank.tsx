@@ -14,7 +14,7 @@ function Badge({ text, cls }: { text: string; cls: string }) {
   );
 }
 
-// ── 借入者ビュー（Digloss Bank） ──
+// ── 借入者ビュー（Dig Bank） ──
 export function DiglossBank() {
   const loans = ALL_LOANS.filter((l) => l.status === "承認済");
   const totalOutstanding = loans.reduce((s, l) => s + l.currentBalance, 0);
@@ -22,7 +22,7 @@ export function DiglossBank() {
   return (
     <>
       <SectionHeader
-        title="Digloss Bank（借入残高）"
+        title="Dig Bank（借入残高）"
         note="入社時の必須初回借入＋承認済の追加借入。実績Digから自動返済。"
       />
       <div className="mb-4 grid gap-4 sm:grid-cols-3">
