@@ -1293,7 +1293,7 @@ export async function listMembersByDivision(division?: string) {
       positionBase: true,
       evaluationCycle: true,
       salaryGrade: true,
-      salaryRow: true,
+      joinedOn: true,
     },
     orderBy: [{ division: "asc" }, { personId: "asc" }],
   });

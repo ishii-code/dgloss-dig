@@ -228,6 +228,7 @@ export function MemberMaster() {
               <th className="px-3 py-2 font-semibold">事業部</th>
               <th className="px-3 py-2 font-semibold">役職/職種</th>
               <th className="px-3 py-2 font-semibold">雇用</th>
+              <th className="px-3 py-2 font-semibold">入社日</th>
               <th className="px-3 py-2 text-right font-semibold">基本給</th>
               <th className="px-3 py-2 text-right font-semibold">役職ベース</th>
               <th className="px-3 py-2 font-semibold">サイクル</th>
@@ -242,6 +243,9 @@ export function MemberMaster() {
                 <td className="px-3 py-2 text-ink-muted">{m.division}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.position}/{m.jobType ?? "—"}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.employmentType}</td>
+                <td className="px-3 py-2 text-ink-muted">
+                  {m.joinedOn || <span className="text-ink-faint">—</span>}
+                </td>
                 <td className="px-3 py-2 text-right">
                   {m.basePay > 0 ? (
                     yen(m.basePay)

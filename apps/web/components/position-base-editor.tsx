@@ -21,6 +21,7 @@ interface Row {
   positionBase: number;
   evaluationCycle: string;
   salaryGrade: string | null;
+  joinedOn: string;
 }
 
 interface RangeRow {
@@ -256,6 +257,7 @@ export function PositionBaseEditor() {
             <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
               <th className="px-3 py-2 font-semibold">氏名</th>
               <th className="px-3 py-2 font-semibold">雇用</th>
+              <th className="px-3 py-2 font-semibold">入社日</th>
               <th className="px-3 py-2 text-right font-semibold">基本給（参考）</th>
               <th className="px-3 py-2 font-semibold">役職</th>
               <th className="px-3 py-2 font-semibold">レンジ（A/B/C）</th>
@@ -266,7 +268,7 @@ export function PositionBaseEditor() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-3 text-ink-muted">
+                <td colSpan={8} className="px-3 py-3 text-ink-muted">
                   この事業部の在籍メンバーがいません
                 </td>
               </tr>
@@ -281,6 +283,7 @@ export function PositionBaseEditor() {
                       <span className="ml-1 text-[11px] text-ink-faint">{r.personId}</span>
                     </td>
                     <td className="px-3 py-2 text-ink-muted">{r.employmentType}</td>
+                    <td className="px-3 py-2 text-ink-muted">{(r.joinedOn ?? "").slice(0, 10) || "—"}</td>
                     <td className="px-3 py-2 text-right text-ink-muted">
                       {Number(r.basePay) > 0
                         ? yen(Number(r.basePay))
