@@ -411,6 +411,103 @@ export async function probeSalaryLabels(): Promise<
   return [...stats.values()].sort((a, b) => b.nonZero - a.nonZero);
 }
 
+export interface MailFieldStat {
+  /** 項目のパス（例 company.company_mail_address） */
+  path: string;
+  /** メール形式の値が入っていた人数 */
+  filled: number;
+  /** 値はあるがメール形式でなかった人数 */
+  invalid: number;
+  /** その項目に値があった人数 */
+  total: number;
+  /** 例（ローカル部は伏せてドメインのみ） */
+  sampleDomain: string;
+}
+
+export interface MailProbeResult {
+  connected: boolean;
+  /** 調べた人数（数ページ分） */
+  scanned: number;
+  /** メール形式の値を1つ以上持っていた人数 */
+  withMail: number;
+  /** 取り込みロジックが見る候補キー（この順に採用） */
+  usedKeys: string[];
+  /** 項目別の充足状況（多い順） */
+  fields: MailFieldStat[];
+  /** メールらしい値を持つが候補キーに無い項目（＝今は取り込めていない項目） */
+  unknownFields: string[];
+}
+
+/**
+ * jinjer 従業員APIにメール項目があるかを実データで確認する診断。
+ * 個人情報のため値そのものは返さず、項目名・充足数・ドメインのみ返す。
+ */
+export async function probeMailFields(): Promise<MailProbeResult> {
+  if (!jinjerConnected) {
+    return { connected: false, scanned: 0, withMail: 0, usedKeys: MAIL_KEYS, fields: [], unknownFields: [] };
+  }
+
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const stats = new Map<string, MailFieldStat>();
+  const unknown = new Set<string>();
+  let scanned = 0;
+  let withMail = 0;
+
+  // 数ページ分だけ調べる（全件は不要・タイムアウト回避）。
+  for (let page = 1; page <= 3; page++) {
+    const r = await fetchJson(`${JINJER_BASE}/v1/employees?page=${page}`, headers, 2);
+    if (!r.ok || r.json === null) break;
+    const list = extractList(r.json);
+    if (list.length === 0) break;
+
+    for (const rec of list) {
+      scanned += 1;
+      let hit = false;
+      // top-level / company / personal の各階層を走査する。
+      const scopes: Array<[string, Record<string, unknown>]> = [
+        ["", rec],
+        ["company.", asObj(rec["company"])],
+        ["personal.", asObj(rec["personal"])],
+      ];
+      for (const [prefix, obj] of scopes) {
+        for (const [k, v] of Object.entries(obj)) {
+          if (v === null || v === undefined || typeof v === "object") continue;
+          const raw = String(v).trim();
+          if (raw === "") continue;
+          // 項目名がメールらしい、または値に @ を含むものだけを対象にする。
+          if (!/mail|email/i.test(k) && !raw.includes("@")) continue;
+
+          const path = `${prefix}${k}`;
+          const mail = asEmail(raw);
+          const cur = stats.get(path) ?? { path, filled: 0, invalid: 0, total: 0, sampleDomain: "" };
+          cur.total += 1;
+          if (mail) {
+            cur.filled += 1;
+            hit = true;
+            if (!cur.sampleDomain) cur.sampleDomain = `***@${mail.split("@")[1] ?? ""}`;
+          } else {
+            cur.invalid += 1;
+          }
+          stats.set(path, cur);
+          // 候補キーに無い項目は「未対応」として報告する（候補キーを足す判断材料）。
+          if (mail && !MAIL_KEYS.includes(k)) unknown.add(path);
+        }
+      }
+      if (hit) withMail += 1;
+    }
+  }
+
+  return {
+    connected: true,
+    scanned,
+    withMail,
+    usedKeys: MAIL_KEYS,
+    fields: [...stats.values()].sort((a, b) => b.filled - a.filled),
+    unknownFields: [...unknown],
+  };
+}
+
 export type EnrichKind = "affiliations" | "salaries";
 
 export interface EnrichRow {

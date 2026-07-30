@@ -197,6 +197,47 @@ export function MemberMaster() {
     }
   }
 
+  // jinjer にメール項目があるかの診断（アカウント発行の宛先に使えるか確認）。
+  async function probeMailFields() {
+    setMsg("⏳ メール項目を確認中…");
+    try {
+      const r = await apiSend<{
+        connected: boolean;
+        scanned: number;
+        withMail: number;
+        usedKeys: string[];
+        fields: Array<{ path: string; filled: number; invalid: number; total: number; sampleDomain: string }>;
+        unknownFields: string[];
+      }>("/api/members/jinjer-mail-fields", "POST", {});
+      if (!r.connected) {
+        setMsg("メール項目の確認: jinjer のキーが未設定のため確認できません（JINJER_API_KEY / シークレット）。");
+        return;
+      }
+      if (r.fields.length === 0) {
+        setMsg(
+          `【jinjer メール項目】${r.scanned}名を確認 → メールらしい項目は見つかりませんでした。\n` +
+            `jinjer 側にメールが登録されていない可能性があります。アカウント発行は仮メール（従業員ID@ドメイン）になります。`,
+        );
+        return;
+      }
+      const lines = r.fields.map(
+        (f) =>
+          `・${f.path}: メール形式 ${f.filled}名` +
+          `${f.invalid > 0 ? ` / 形式外 ${f.invalid}名` : ""}` +
+          `${f.sampleDomain ? `（例 ${f.sampleDomain}）` : ""}` +
+          `${r.unknownFields.includes(f.path) ? " ← 未対応（取り込めていません）" : ""}`,
+      );
+      let msg = `【jinjer メール項目】${r.scanned}名を確認 → メールを持つ人 ${r.withMail}名\n` + lines.join("\n");
+      msg += `\n取り込み候補キー: ${r.usedKeys.join(", ")}`;
+      if (r.unknownFields.length > 0) {
+        msg += `\n※「未対応」の項目名を教えてください。候補キーに追加すれば実メールで発行できます。`;
+      }
+      setMsg(msg);
+    } catch (e) {
+      setMsg(`メール項目の確認失敗: ${(e as Error).message}`);
+    }
+  }
+
   // 部署ツリーの正規化プレビュー（末端所属 → 事業部 の対応確認）。
   async function probeOrg() {
     setMsg("⏳ 部署ツリーを確認中…");
@@ -241,6 +282,9 @@ export function MemberMaster() {
         </button>
         <button onClick={probeSalaryLabels} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           給与項目を確認
+        </button>
+        <button onClick={probeMailFields} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
+          メール項目を確認
         </button>
         <button onClick={restoreManual} disabled={syncing} className="rounded-card border border-semantic-warn px-3 py-1.5 text-sm font-semibold text-semantic-warn disabled:opacity-60">
           手入力項目を復元（同期前に戻す）
