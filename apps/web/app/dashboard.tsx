@@ -79,7 +79,9 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
   const [tab, setTab] = useState("monitor");
   const [leg, setLeg] = useState<Leg>("monthly");
   // ログイン中ロール（認証有効時はセッション由来・未設定時は切替で権限デモ）
-  const [role, setRole] = useState<Role>((signedIn?.role as Role) ?? "SUPER_ADMIN");
+  // 認証が未設定のときの既定は「ユーザー」。URLを知っただけの人が管理機能へ入れないようにする。
+  // 権限の動作確認が必要な場合のみ NEXT_PUBLIC_ALLOW_ROLE_SWITCH=true で切替を出す。
+  const [role, setRole] = useState<Role>((signedIn?.role as Role) ?? "USER");
   const [unread, setUnread] = useState(0);
   // 対象月（YYYY-MM）。四半期/月セレクタで切替。
   // SSRとのhydration不一致を避けるため初期値は固定の YEAR_MONTH とし、
@@ -194,6 +196,7 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
         roles={ROLES}
         signedIn={signedIn ? { name: account.name, email: account.id } : null}
         unlinked={Boolean(signedIn && !signedIn.personId)}
+        allowRoleSwitch={process.env.NEXT_PUBLIC_ALLOW_ROLE_SWITCH === "true"}
       />
       <TabNav tabs={visibleTabs} active={activeTab} onSelect={setTab} badges={badges} />
 

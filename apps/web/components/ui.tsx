@@ -8,6 +8,7 @@ export function Header({
   roles,
   signedIn,
   unlinked,
+  allowRoleSwitch,
 }: {
   role: Role;
   onRoleChange: (r: Role) => void;
@@ -16,6 +17,8 @@ export function Header({
   signedIn?: { name: string; email: string } | null;
   /** 従業員マスタと紐付いていない（マイページが出せない）状態か */
   unlinked?: boolean;
+  /** 認証未設定時にロール切替セレクタを出すか（既定は出さない） */
+  allowRoleSwitch?: boolean;
 }) {
   return (
     <header className="border-b border-surface-border bg-white">
@@ -52,8 +55,8 @@ export function Header({
                 サインアウト
               </a>
             </>
-          ) : (
-            /* 認証が未設定のときのみ、権限の動作確認用にロールを切り替えられる。 */
+          ) : allowRoleSwitch ? (
+            /* 権限の動作確認用（NEXT_PUBLIC_ALLOW_ROLE_SWITCH=true のときだけ表示）。 */
             <label className="flex items-center gap-1">
               <span className="hidden sm:inline">権限</span>
               <select
@@ -68,6 +71,10 @@ export function Header({
                 ))}
               </select>
             </label>
+          ) : (
+            <span className="rounded-pill bg-slate-100 px-2 py-0.5 font-semibold text-ink-muted">
+              {ROLE_LABEL[role]}
+            </span>
           )}
         </div>
       </div>
