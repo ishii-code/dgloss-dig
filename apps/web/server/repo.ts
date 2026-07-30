@@ -1310,12 +1310,79 @@ export async function listDivisions(): Promise<string[]> {
   return rows.map((r) => r.division).filter(Boolean);
 }
 
-import { SALARY_TABLE } from "@dig/contracts";
+// ─────────────────────────────────────────────
+// 給与レンジ表（役職 × A/B/C → 金額）。役職ベースの参照元（要件 F-1）
+// ─────────────────────────────────────────────
+/** 給与レンジ表を {役職: {A|B|C: 金額}} の形で取得。 */
+export async function getSalaryRangeMap(): Promise<Record<string, Record<string, number>>> {
+  const rows = await prisma.salaryRange.findMany();
+  const map: Record<string, Record<string, number>> = {};
+  for (const r of rows) {
+    map[r.position] ??= {};
+    map[r.position][r.grade] = r.amount.toNumber();
+  }
+  return map;
+}
+
+export const listSalaryRanges = () =>
+  prisma.salaryRange.findMany({ orderBy: [{ position: "asc" }, { grade: "asc" }] });
+
+/** 実際の給与（月額）に最も近いレンジ(A/B/C)を選ぶ。 */
+export function nearestRange(
+  ranges: Record<string, number> | undefined,
+  monthlySalary: number,
+): { grade: string; amount: number } | null {
+  if (!ranges) return null;
+  const entries = Object.entries(ranges);
+  if (entries.length === 0) return null;
+  if (monthlySalary <= 0) return null;
+  let best = entries[0];
+  for (const e of entries) {
+    if (Math.abs(e[1] - monthlySalary) < Math.abs(best[1] - monthlySalary)) best = e;
+  }
+  return { grade: best[0], amount: best[1] };
+}
+
+/** 給与（月額）。正社員は基本給、時給者は 時給×160h を目安に月額換算。 */
+function monthlySalaryOf(m: { basePay: Prisma.Decimal; hourlyWage: Prisma.Decimal | null }): number {
+  const base = m.basePay.toNumber();
+  if (base > 0) return base;
+  const hourly = m.hourlyWage ? m.hourlyWage.toNumber() : 0;
+  return hourly > 0 ? Math.round(hourly * 160) : 0;
+}
 
 /**
- * 役職・等級/行・役職ベース・評価サイクルの一括更新。
- * 等級(A〜G)と行が指定されていれば、全社統一給与テーブルの該当額を
- * 役職ベースとして自動設定する（要件 F-1: 給与レンジ表を参照）。
+ * 対象メンバーのレンジ(A/B/C)を実際の給与から自動判定し、役職ベースを設定する。
+ * 既にレンジが設定されている人も、給与に最も近いレンジで再判定する。
+ */
+export async function autoAssignSalaryRanges(division: string | undefined, actor: string) {
+  const rangeMap = await getSalaryRangeMap();
+  const members = await prisma.member.findMany({
+    where: { status: "在籍", ...(division ? { division } : {}) },
+  });
+  let updated = 0;
+  let skipped = 0;
+  for (const m of members) {
+    const salary = monthlySalaryOf(m);
+    const hit = nearestRange(rangeMap[m.position], salary);
+    if (!hit) {
+      skipped += 1; // 給与未取得・レンジ表未整備
+      continue;
+    }
+    await prisma.member.update({
+      where: { personId: m.personId },
+      data: { salaryGrade: hit.grade, positionBase: hit.amount },
+    });
+    updated += 1;
+  }
+  await audit(actor, "member.salary_range.auto", "Member", null, { updated, skipped, division: division ?? null });
+  return { updated, skipped, total: members.length };
+}
+
+/**
+ * 役職・レンジ・役職ベース・評価サイクルの一括更新。
+ * レンジ(A/B/C)が指定されていれば、給与レンジ表の該当額を役職ベースに設定する
+ * （要件 F-1: 役職×A/B/C の金額表を参照）。
  */
 export async function bulkUpdatePositionBase(
   rows: Array<{
@@ -1324,25 +1391,27 @@ export async function bulkUpdatePositionBase(
     positionBase?: number;
     evaluationCycle?: string;
     salaryGrade?: string;
-    salaryRow?: number;
   }>,
   actor: string,
 ) {
+  const rangeMap = await getSalaryRangeMap();
   let updated = 0;
   for (const r of rows) {
     const data: Prisma.MemberUpdateInput = {};
     if (r.position) data.position = r.position as Prisma.MemberUpdateInput["position"];
     if (r.evaluationCycle) data.evaluationCycle = r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"];
     if (r.salaryGrade) data.salaryGrade = r.salaryGrade;
-    if (typeof r.salaryRow === "number") data.salaryRow = r.salaryRow;
 
-    // 等級 × 行 が揃えば給与テーブルから役職ベースを引く（手入力値より優先）。
-    const fromTable =
-      r.salaryGrade && typeof r.salaryRow === "number"
-        ? SALARY_TABLE[r.salaryGrade]?.[r.salaryRow]
-        : undefined;
-    if (typeof fromTable === "number") {
-      data.positionBase = fromTable;
+    // レンジが決まっていれば給与レンジ表の金額を役職ベースにする（手入力より優先）。
+    const current = await prisma.member.findUnique({
+      where: { personId: r.personId },
+      select: { position: true, salaryGrade: true },
+    });
+    const position = r.position ?? current?.position;
+    const grade = r.salaryGrade ?? current?.salaryGrade ?? undefined;
+    const fromRange = position && grade ? rangeMap[position]?.[grade] : undefined;
+    if (typeof fromRange === "number") {
+      data.positionBase = fromRange;
     } else if (typeof r.positionBase === "number" && r.positionBase >= 0) {
       data.positionBase = r.positionBase;
     }
