@@ -18,6 +18,8 @@ interface Member {
   personId: string;
   name: string;
   division: string;
+  /** 個別指定された事業部（同期・紐づけルールより優先） */
+  divisionOverride?: string | null;
   position: string;
   jobType: string | null;
   employmentType: string;
@@ -273,7 +275,17 @@ export function MemberMaster() {
               <tr key={m.personId} className="border-b border-surface-border last:border-0">
                 <td className="px-3 py-2 text-ink-muted">{m.personId}</td>
                 <td className="px-3 py-2 font-medium text-ink">{m.name}</td>
-                <td className="px-3 py-2 text-ink-muted">{m.division}</td>
+                <td className="px-3 py-2 text-ink-muted">
+                  {m.division || <span className="text-ink-faint">未設定</span>}
+                  {m.divisionOverride && (
+                    <span
+                      title="個別指定（jinjer同期・紐づけルールでは上書きされません）"
+                      className="ml-1.5 rounded-pill bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-primary"
+                    >
+                      個別
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-ink-muted">{m.position}/{m.jobType ?? "—"}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.employmentType}</td>
                 <td className="px-3 py-2 text-ink-muted">

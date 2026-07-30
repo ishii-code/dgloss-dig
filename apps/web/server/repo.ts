@@ -347,6 +347,9 @@ export async function upsertMember(input: {
 }) {
   const data = {
     name: input.name, division: input.division,
+    // 画面から事業部を編集した場合は個別指定として記録する。
+    // これが無いと jinjer 同期／紐づけルールの再適用で元に戻ってしまう。
+    divisionOverride: input.division || null,
     position: input.position as Prisma.MemberCreateInput["position"],
     jobType: input.jobType as Prisma.MemberCreateInput["jobType"],
     employmentType: input.employmentType as Prisma.MemberCreateInput["employmentType"],
