@@ -1,3 +1,10 @@
+# [1.28.0](https://github.com/ishii-code/dgloss-dig/compare/v1.27.0...v1.28.0) (2026-07-30)
+
+
+### Features
+
+* **auth:** 初期管理者の緊急ログイン（ロックアウト復旧用） ([#72](https://github.com/ishii-code/dgloss-dig/issues/72)) ([2fc2051](https://github.com/ishii-code/dgloss-dig/commit/2fc2051b9d7e46ad550198f55717377b6b168e4b))
+
 # [1.27.0](https://github.com/ishii-code/dgloss-dig/compare/v1.26.1...v1.27.0) (2026-07-30)
 
 
