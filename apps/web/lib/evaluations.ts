@@ -12,6 +12,9 @@ export interface EvaluationDto {
   yearMonth: string;
   personId: string;
   division: string;
+  positionBase: number; // 予算Dig の計算元（0だと座席コスト分だけになる）
+  residencyDays: number;
+  prorationCoefficient: number;
   monthlyBudgetDig: number;
   cumulativeBudgetDig: number;
   seikaDig: number;
@@ -58,8 +61,8 @@ export function buildMembersFromDb(
       eval: {
         yearMonth: e.yearMonth,
         personId: e.personId,
-        residencyDays: 0,
-        prorationCoefficient: 0,
+        residencyDays: e.residencyDays ?? 0,
+        prorationCoefficient: e.prorationCoefficient ?? 0,
         seatCost: 0,
         totalCost: 0,
         monthlyBudgetDig: e.monthlyBudgetDig,
@@ -79,6 +82,7 @@ export function buildMembersFromDb(
         },
       },
       incentive: qb.incentive,
+      positionBase: e.positionBase,
     };
   });
 }
