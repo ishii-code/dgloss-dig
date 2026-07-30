@@ -222,6 +222,10 @@ model Member {
   jinjerTeam      String?
   /// 個別に指定した事業部。設定時は同期・ルール適用より優先される
   divisionOverride String?
+  /// 給与テーブルの等級（A〜G）。役職ベースの算定元
+  salaryGrade     String?
+  /// 給与テーブルの行（1〜9=上/0=基準/10〜18=下）
+  salaryRow       Int?
   position        Position
   jobType         JobType?
   groupLeaderId   String?

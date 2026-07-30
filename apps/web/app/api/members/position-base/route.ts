@@ -28,6 +28,8 @@ const Body = z.object({
         position: z.enum(["部長", "マネージャー", "リーダー", "メンバー"]).optional(),
         positionBase: z.number().min(0).max(100_000_000).optional(),
         evaluationCycle: z.enum(["四半期", "半期"]).optional(),
+        salaryGrade: z.enum(["A", "B", "C", "D", "E", "F", "G"]).optional(),
+        salaryRow: z.number().int().min(0).max(18).optional(),
       }),
     )
     .max(500),

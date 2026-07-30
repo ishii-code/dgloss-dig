@@ -1292,6 +1292,8 @@ export async function listMembersByDivision(division?: string) {
       hourlyWage: true,
       positionBase: true,
       evaluationCycle: true,
+      salaryGrade: true,
+      salaryRow: true,
     },
     orderBy: [{ division: "asc" }, { personId: "asc" }],
   });
@@ -1308,17 +1310,43 @@ export async function listDivisions(): Promise<string[]> {
   return rows.map((r) => r.division).filter(Boolean);
 }
 
-/** 役職・役職ベース・評価サイクルの一括更新（AIテレアポ等の手入力運用）。 */
+import { SALARY_TABLE } from "@dig/contracts";
+
+/**
+ * 役職・等級/行・役職ベース・評価サイクルの一括更新。
+ * 等級(A〜G)と行が指定されていれば、全社統一給与テーブルの該当額を
+ * 役職ベースとして自動設定する（要件 F-1: 給与レンジ表を参照）。
+ */
 export async function bulkUpdatePositionBase(
-  rows: Array<{ personId: string; position?: string; positionBase?: number; evaluationCycle?: string }>,
+  rows: Array<{
+    personId: string;
+    position?: string;
+    positionBase?: number;
+    evaluationCycle?: string;
+    salaryGrade?: string;
+    salaryRow?: number;
+  }>,
   actor: string,
 ) {
   let updated = 0;
   for (const r of rows) {
     const data: Prisma.MemberUpdateInput = {};
     if (r.position) data.position = r.position as Prisma.MemberUpdateInput["position"];
-    if (typeof r.positionBase === "number" && r.positionBase >= 0) data.positionBase = r.positionBase;
     if (r.evaluationCycle) data.evaluationCycle = r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"];
+    if (r.salaryGrade) data.salaryGrade = r.salaryGrade;
+    if (typeof r.salaryRow === "number") data.salaryRow = r.salaryRow;
+
+    // 等級 × 行 が揃えば給与テーブルから役職ベースを引く（手入力値より優先）。
+    const fromTable =
+      r.salaryGrade && typeof r.salaryRow === "number"
+        ? SALARY_TABLE[r.salaryGrade]?.[r.salaryRow]
+        : undefined;
+    if (typeof fromTable === "number") {
+      data.positionBase = fromTable;
+    } else if (typeof r.positionBase === "number" && r.positionBase >= 0) {
+      data.positionBase = r.positionBase;
+    }
+
     if (Object.keys(data).length === 0) continue;
     await prisma.member.update({ where: { personId: r.personId }, data });
     updated += 1;
