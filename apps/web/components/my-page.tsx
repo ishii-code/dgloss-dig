@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet } from "@/lib/api";
 import { man, pct, rateColor, yen } from "@/lib/format";
 import { monthLabel, monthsOfQuarter, fiscalOf, quarterLabelOf, quarterOptions } from "@/lib/period";
+import { DigApplicationPanel } from "./dig-application";
 import { RankBadge, SectionHeader } from "./ui";
 
 interface MonthRow {
@@ -82,10 +83,13 @@ export function MyPage({
   personId,
   canViewOthers,
   initialYm,
+  actorId,
 }: {
   personId: string | null;
   canViewOthers: boolean;
   initialYm: string;
+  /** 操作者のアカウントID（Dig申請の承認者として記録） */
+  actorId: string;
 }) {
   const [target, setTarget] = useState<string | null>(personId);
   const [ym, setYm] = useState(initialYm);
@@ -98,9 +102,8 @@ export function MyPage({
   const months = useMemo(() => monthsOfQuarter(fyYear, quarter), [fyYear, quarter]);
   const quarters = useMemo(() => quarterOptions(initialYm), [initialYm]);
 
-  // ADMIN以上はメンバー一覧を取得して選択できる。
+  // メンバー一覧（ADMIN以上のメンバー選択／Dig申請の折半相手選択に使用）。
   useEffect(() => {
-    if (!canViewOthers) return;
     void (async () => {
       try {
         setMembers(await apiGet<PickerMember[]>("/api/my-page/members"));
@@ -108,7 +111,7 @@ export function MyPage({
         /* 取得失敗は無視（本人分のみ表示） */
       }
     })();
-  }, [canViewOthers]);
+  }, []);
 
   const load = useCallback(async () => {
     if (!target) {
@@ -274,6 +277,16 @@ export function MyPage({
               ※ 実績Dig = 成果Dig + ボーナスDig + 借入Dig。インセンティブ原資は成果+ボーナス（借入は除外）。
             </div>
           </div>
+
+          {/* Dig申請（成果Digの申請・承認） */}
+          <DigApplicationPanel
+            applicantId={data.member.personId}
+            applicantName={data.member.name}
+            actorId={actorId}
+            isAdmin={canViewOthers}
+            isSelf={data.member.personId === personId}
+            members={members}
+          />
 
           {/* 借入・返済状況 */}
           <SectionHeader

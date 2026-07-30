@@ -828,6 +828,218 @@ async function aggregateGroupEvaluations(yearMonth: string) {
 }
 
 
+
+// ─────────────────────────────────────────────
+// Dig申請（成果Digの申請・承認）
+// ─────────────────────────────────────────────
+/**
+ * 顧客ID（企業ID）から契約管理DBのキャッシュを引き、申請フォームの自動入力に使う。
+ * 顧客IDが未登録なら空で返し、手入力に委ねる（契約DBの自動連携は未接続でも動く）。
+ */
+export async function lookupContractsByCompany(companyId: string) {
+  const contracts = await prisma.contract.findMany({
+    where: { OR: [{ companyId }, { id: companyId }, { contractNo: companyId }] },
+    include: { assignment: true },
+    orderBy: { startDate: "desc" },
+  });
+  const rules = await prisma.calcRule.findMany({ where: { active: true } });
+  return contracts.map((c) => {
+    const contract = {
+      id: c.id,
+      contractNo: c.contractNo,
+      customerName: c.customerName,
+      companyId: c.companyId,
+      division: c.division,
+      modelKey: c.modelKey,
+      status: c.status,
+      baseAmount: c.baseAmount.toNumber(),
+      setupFee: c.setupFee.toNumber(),
+      initialFee: c.initialFee.toNumber(),
+      termMonths: c.termMonths,
+      startDate: c.startDate ? c.startDate.toISOString().slice(0, 10) : null,
+      lineItems: (c.lineItems as unknown as ContractLineItem[]) ?? [],
+      yearMonth: c.yearMonth,
+    } as unknown as Contract;
+    // 事業部のルールで獲得Digの目安を出す（複数該当なら最大値）。
+    const suggested = rules
+      .filter((r) => r.division === c.division)
+      .map((r) =>
+        computeContractDig(contract, {
+          id: r.id,
+          division: r.division,
+          name: r.name,
+          ruleType: r.ruleType as CalcRule["ruleType"],
+          modelKeyFilter: r.modelKeyFilter,
+          unitLine: r.unitLine.toNumber(),
+          unitCall: r.unitCall.toNumber(),
+          ratioPercent: r.ratioPercent.toNumber(),
+          fixedDig: r.fixedDig.toNumber(),
+          active: r.active,
+        } as CalcRule),
+      );
+    return {
+      contractId: c.id,
+      contractNo: c.contractNo,
+      companyId: c.companyId,
+      companyName: c.customerName,
+      division: c.division,
+      productName: c.modelKey,
+      termMonths: c.termMonths,
+      contractSummary: c.termMonths > 0 ? `${c.termMonths}ヵ月プラン` : null,
+      startDate: c.startDate ? c.startDate.toISOString().slice(0, 10) : null,
+      baseAmount: c.baseAmount.toNumber(),
+      status: c.status,
+      suggestedDig: suggested.length > 0 ? Math.max(...suggested) : 0,
+    };
+  });
+}
+
+export async function createDigApplication(input: {
+  applicantId: string;
+  companyId?: string | null;
+  companyName: string;
+  productName: string;
+  contractSummary?: string | null;
+  contractId?: string | null;
+  grantedDig: number;
+  splitDig?: number;
+  splitPartnerId?: string | null;
+  contractDate: string;
+  note?: string | null;
+}) {
+  const row = await prisma.digApplication.create({
+    data: {
+      applicantId: input.applicantId,
+      companyId: input.companyId ?? null,
+      companyName: input.companyName,
+      productName: input.productName,
+      contractSummary: input.contractSummary ?? null,
+      contractId: input.contractId ?? null,
+      grantedDig: input.grantedDig,
+      splitDig: input.splitDig ?? 0,
+      splitPartnerId: input.splitPartnerId ?? null,
+      contractDate: new Date(`${input.contractDate}T00:00:00Z`),
+      note: input.note ?? null,
+      status: "申請中",
+    },
+  });
+  await audit(input.applicantId, "dig.application.create", "DigApplication", String(row.id), {
+    companyName: input.companyName,
+    grantedDig: input.grantedDig,
+  });
+  return row;
+}
+
+/** Dig申請の一覧。personId 指定なら本人分、未指定は全件（ADMIN以上）。 */
+export async function listDigApplications(personId?: string) {
+  const rows = await prisma.digApplication.findMany({
+    where: personId ? { OR: [{ applicantId: personId }, { splitPartnerId: personId }] } : {},
+    orderBy: [{ status: "asc" }, { contractDate: "desc" }],
+    take: 300,
+  });
+  const ids = [...new Set(rows.flatMap((r) => [r.applicantId, r.splitPartnerId].filter(Boolean) as string[]))];
+  const members = await prisma.member.findMany({
+    where: { personId: { in: ids } },
+    select: { personId: true, name: true },
+  });
+  const nameOf = new Map(members.map((m) => [m.personId, m.name]));
+  return rows.map((r) => ({
+    id: r.id,
+    applicantId: r.applicantId,
+    applicantName: nameOf.get(r.applicantId) ?? r.applicantId,
+    companyId: r.companyId,
+    companyName: r.companyName,
+    productName: r.productName,
+    contractSummary: r.contractSummary,
+    grantedDig: r.grantedDig.toNumber(),
+    splitDig: r.splitDig.toNumber(),
+    splitPartnerId: r.splitPartnerId,
+    splitPartnerName: r.splitPartnerId ? (nameOf.get(r.splitPartnerId) ?? r.splitPartnerId) : null,
+    contractDate: r.contractDate.toISOString().slice(0, 10),
+    note: r.note,
+    status: r.status,
+    reviewedBy: r.reviewedBy,
+    reviewedOn: r.reviewedOn ? r.reviewedOn.toISOString().slice(0, 10) : null,
+    rejectReason: r.rejectReason,
+  }));
+}
+
+/** 成果Digを加算し、実績・達成率・ランクを再計算する（評価行が無ければ何もしない）。 */
+async function addSeikaDig(yearMonth: string, personId: string, amount: number, actor: string) {
+  const ev = await prisma.monthlyEvaluation.findUnique({
+    where: { yearMonth_personId: { yearMonth, personId } },
+  });
+  if (!ev) return false;
+  if (ev.finalized) throw new ConflictError("確定済みの月のため加算できません");
+  const seika = ev.seikaDig.toNumber() + amount;
+  const bonus = ev.bonusDig.toNumber();
+  const loan = ev.loanDig.toNumber();
+  const actual = seika + bonus + loan;
+  const mBudget = ev.monthlyBudgetDig.toNumber();
+  const cBudget = ev.cumulativeBudgetDig.toNumber();
+  const mRate = achievementRate(actual, mBudget);
+  const cRate = achievementRate(actual, cBudget);
+  await prisma.monthlyEvaluation.update({
+    where: { yearMonth_personId: { yearMonth, personId } },
+    data: {
+      seikaDig: seika,
+      monthlyActualDig: actual,
+      monthlyRate: mRate,
+      monthlyRank: evaluationRank(mRate),
+      cumulativeActualDig: actual,
+      cumulativeRate: cRate,
+      cumulativeRank: evaluationRank(cRate),
+    },
+  });
+  await audit(actor, "dig.seika.add", "MonthlyEvaluation", `${yearMonth}/${personId}`, { amount });
+  return true;
+}
+
+/**
+ * Dig申請の承認／却下（ADMIN以上）。
+ * 承認時は契約日の年月の評価へ成果Digを加算する。
+ * 折半がある場合、申請主は 獲得−折半、折半相手に 折半分を計上する。
+ */
+export async function decideDigApplication(
+  id: number,
+  approve: boolean,
+  actor: string,
+  rejectReason?: string,
+) {
+  const app = await prisma.digApplication.findUnique({ where: { id } });
+  if (!app) throw new NotFoundError("申請が見つかりません");
+  if (app.status !== "申請中") throw new ConflictError("既に処理済みの申請です");
+
+  let applied = false;
+  let partnerApplied = false;
+  if (approve) {
+    const ym = app.contractDate.toISOString().slice(0, 7);
+    const granted = app.grantedDig.toNumber();
+    const split = app.splitDig.toNumber();
+    const ownShare = Math.max(0, granted - split);
+    if (ownShare > 0) applied = await addSeikaDig(ym, app.applicantId, ownShare, actor);
+    if (split > 0 && app.splitPartnerId) {
+      partnerApplied = await addSeikaDig(ym, app.splitPartnerId, split, actor);
+    }
+  }
+
+  const row = await prisma.digApplication.update({
+    where: { id },
+    data: {
+      status: approve ? "承認済" : "却下",
+      reviewedBy: actor,
+      reviewedOn: new Date(),
+      rejectReason: approve ? null : (rejectReason ?? null),
+    },
+  });
+  await audit(actor, approve ? "dig.application.approve" : "dig.application.reject", "DigApplication", String(id), {
+    grantedDig: app.grantedDig.toNumber(),
+    applied,
+    partnerApplied,
+  });
+  return { id: row.id, status: row.status, applied, partnerApplied };
+}
+
 // ─────────────────────────────────────────────
 // マイページ（本人の実績・借入・ボーナス・インセン）
 // ─────────────────────────────────────────────
