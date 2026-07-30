@@ -1,3 +1,10 @@
+# [1.25.0](https://github.com/ishii-code/dgloss-dig/compare/v1.24.0...v1.25.0) (2026-07-30)
+
+
+### Features
+
+* 契約管理DBの読み取り専用連携＋従業員マスタからのアカウント一括発行 ([#65](https://github.com/ishii-code/dgloss-dig/issues/65)) ([b45c9a3](https://github.com/ishii-code/dgloss-dig/commit/b45c9a321b2ee55eac59bcf0ddb820aa7f20fed6))
+
 # [1.24.0](https://github.com/ishii-code/dgloss-dig/compare/v1.23.0...v1.24.0) (2026-07-30)
 
 
