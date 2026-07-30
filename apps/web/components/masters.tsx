@@ -52,6 +52,8 @@ export function MemberMaster() {
   const [msg, setMsg] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   const [syncing, setSyncing] = useState(false);
+  // 一覧の「編集」で開くモーダル（表が長く、下の入力欄では変化が見えないため）。
+  const [editing, setEditing] = useState<Member | null>(null);
 
   async function load() {
     try {
@@ -303,7 +305,7 @@ export function MemberMaster() {
                 <td className="px-3 py-2 text-right">{yen(m.positionBase)}</td>
                 <td className="px-3 py-2 text-ink-muted">{m.evaluationCycle}</td>
                 <td className="px-3 py-2 text-center">
-                  <button onClick={() => setForm(m)} className="mr-2 text-xs font-semibold text-brand-primary">編集</button>
+                  <button onClick={() => setEditing(m)} className="mr-2 text-xs font-semibold text-brand-primary">編集</button>
                   <button onClick={() => del(m.personId)} className="text-xs text-semantic-danger">削除</button>
                 </td>
               </tr>
@@ -313,25 +315,27 @@ export function MemberMaster() {
       </div>
 
       <div className="rounded-card border border-surface-border bg-white p-4 shadow-card">
-        <div className="mb-3 text-sm font-semibold text-ink">従業員 登録 / 更新</div>
+        <div className="mb-3 text-sm font-semibold text-ink">従業員 新規登録（既存の編集は一覧の「編集」から）</div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          <F label="Person ID"><input className="inp" value={form.personId} onChange={(e) => setForm({ ...form, personId: e.target.value })} /></F>
-          <F label="氏名"><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></F>
-          <F label="事業部"><input className="inp" value={form.division} onChange={(e) => setForm({ ...form, division: e.target.value })} /></F>
-          <F label="役職"><select className="inp" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })}>{POSITIONS.map((p) => <option key={p}>{p}</option>)}</select></F>
-          <F label="職種"><select className="inp" value={form.jobType ?? ""} onChange={(e) => setForm({ ...form, jobType: e.target.value || null })}><option value="">—</option>{JOBS.map((j) => <option key={j}>{j}</option>)}</select></F>
-          <F label="雇用形態"><select className="inp" value={form.employmentType} onChange={(e) => setForm({ ...form, employmentType: e.target.value })}>{EMP.map((x) => <option key={x}>{x}</option>)}</select></F>
-          <F label="基本給与"><input type="number" className="inp" value={form.basePay} onChange={(e) => setForm({ ...form, basePay: Number(e.target.value) })} /></F>
-          <F label="役職ベース"><input type="number" className="inp" value={form.positionBase} onChange={(e) => setForm({ ...form, positionBase: Number(e.target.value) })} /></F>
-          <F label="入社日"><input type="date" className="inp" value={form.joinedOn} onChange={(e) => setForm({ ...form, joinedOn: e.target.value })} /></F>
-          <F label="評価サイクル"><select className="inp" value={form.evaluationCycle} onChange={(e) => setForm({ ...form, evaluationCycle: e.target.value })}>{CYCLES.map((c) => <option key={c}>{c}</option>)}</select></F>
-          <F label="ステータス"><select className="inp" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>在籍</option><option>退社</option></select></F>
+          <MemberFields form={form} setForm={setForm} lockPersonId={false} />
         </div>
         <div className="mt-3 flex gap-2">
           <button onClick={save} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">保存</button>
           <button onClick={() => setForm(emptyMember)} className="rounded-card border border-surface-border px-4 py-1.5 text-sm text-ink-muted">クリア</button>
         </div>
       </div>
+      {editing && (
+        <MemberEditDialog
+          member={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async (name) => {
+            setEditing(null);
+            setMsg(`従業員 ${name} を更新しました。予算Digへ反映するには「評価台帳を再計算」を実行してください。`);
+            await load();
+          }}
+        />
+      )}
+
       <style>{`.inp{width:100%;border:1px solid #E2E8F0;border-radius:8px;padding:6px 8px;font-size:13px}`}</style>
 
       {/* 役職ベースの入力（予算Dig の計算元） */}
@@ -353,5 +357,118 @@ function F({ label, children }: { label: string; children: React.ReactNode }) {
       <span className="mb-1 block text-[11px] text-ink-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** 登録/更新フォームの入力欄（モーダルと新規登録で共用）。 */
+function MemberFields({
+  form,
+  setForm,
+  lockPersonId,
+}: {
+  form: Member;
+  setForm: (m: Member) => void;
+  lockPersonId: boolean;
+}) {
+  return (
+    <>
+      <F label="Person ID">
+        <input
+          className="inp"
+          value={form.personId}
+          readOnly={lockPersonId}
+          onChange={(e) => setForm({ ...form, personId: e.target.value })}
+        />
+      </F>
+      <F label="氏名"><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></F>
+      <F label="事業部"><input className="inp" value={form.division} onChange={(e) => setForm({ ...form, division: e.target.value })} /></F>
+      <F label="役職"><select className="inp" value={form.position} onChange={(e) => setForm({ ...form, position: e.target.value })}>{POSITIONS.map((p) => <option key={p}>{p}</option>)}</select></F>
+      <F label="職種"><select className="inp" value={form.jobType ?? ""} onChange={(e) => setForm({ ...form, jobType: e.target.value || null })}><option value="">—</option>{JOBS.map((j) => <option key={j}>{j}</option>)}</select></F>
+      <F label="雇用形態"><select className="inp" value={form.employmentType} onChange={(e) => setForm({ ...form, employmentType: e.target.value })}>{EMP.map((x) => <option key={x}>{x}</option>)}</select></F>
+      <F label="基本給与"><input type="number" className="inp" value={form.basePay} onChange={(e) => setForm({ ...form, basePay: Number(e.target.value) })} /></F>
+      <F label="役職ベース"><input type="number" className="inp" value={form.positionBase} onChange={(e) => setForm({ ...form, positionBase: Number(e.target.value) })} /></F>
+      <F label="入社日"><input type="date" className="inp" value={form.joinedOn} onChange={(e) => setForm({ ...form, joinedOn: e.target.value })} /></F>
+      <F label="評価サイクル"><select className="inp" value={form.evaluationCycle} onChange={(e) => setForm({ ...form, evaluationCycle: e.target.value })}>{CYCLES.map((c) => <option key={c}>{c}</option>)}</select></F>
+      <F label="ステータス"><select className="inp" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>在籍</option><option>退社</option></select></F>
+    </>
+  );
+}
+
+/**
+ * 一覧の「編集」で開くモーダル。表が長いため、画面下の入力欄に値を入れる方式では
+ * 押しても変化が見えなかった（＝効いていないように見えた）ためダイアログにした。
+ */
+function MemberEditDialog({
+  member,
+  onClose,
+  onSaved,
+}: {
+  member: Member;
+  onClose: () => void;
+  onSaved: (name: string) => void | Promise<void>;
+}) {
+  const [form, setForm] = useState<Member>({ ...member, joinedOn: (member.joinedOn ?? "").slice(0, 10) });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!form.name.trim()) {
+      setErr("氏名は必須です");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await apiSend("/api/members", "POST", { ...form, actor: ACTOR });
+      await onSaved(form.name);
+    } catch (e) {
+      setErr(`保存失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl rounded-card border border-surface-border bg-white p-5 shadow-card"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-1 flex items-start justify-between">
+          <div>
+            <div className="text-base font-bold text-ink">{member.name} を編集</div>
+            <div className="text-xs text-ink-muted">Person ID {member.personId}</div>
+          </div>
+          <button onClick={onClose} className="text-sm text-ink-muted">✕ 閉じる</button>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <MemberFields form={form} setForm={setForm} lockPersonId />
+        </div>
+
+        <div className="mt-3 text-[11px] text-ink-faint">
+          ※ 事業部を変更すると「個別指定」として保存され、jinjer同期や紐づけルールでは上書きされません。
+          役職・役職ベースを変更した場合は、この画面の上部にある「評価台帳を再計算」を実行してください。
+        </div>
+
+        {err && <div className="mt-2 rounded-card bg-rose-50 px-3 py-2 text-xs text-semantic-danger">{err}</div>}
+
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={() => void submit()}
+            disabled={busy}
+            className="rounded-card bg-brand-primary px-5 py-2 text-sm font-bold text-white disabled:opacity-50"
+          >
+            {busy ? "保存中…" : "保存"}
+          </button>
+          <button onClick={onClose} className="rounded-card border border-surface-border px-4 py-2 text-sm text-ink-muted">
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
