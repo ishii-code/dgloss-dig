@@ -1,3 +1,10 @@
+# [1.20.0](https://github.com/ishii-code/dgloss-dig/compare/v1.19.1...v1.20.0) (2026-07-30)
+
+
+### Features
+
+* **members:** 従業員マスタと役職ベース入力に入社日を表示 ([#60](https://github.com/ishii-code/dgloss-dig/issues/60)) ([d84b9c4](https://github.com/ishii-code/dgloss-dig/commit/d84b9c40e0d373b0797d82850e03546d822513fe))
+
 ## [1.19.1](https://github.com/ishii-code/dgloss-dig/compare/v1.19.0...v1.19.1) (2026-07-30)
 
 
