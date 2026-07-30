@@ -516,3 +516,33 @@ export const FeatureRequestSchema = z.object({
   createdBy: z.string().min(1).max(64), // アカウントID/氏名
 });
 export type FeatureRequestInput = z.infer<typeof FeatureRequestSchema>;
+
+// ─────────────────────────────────────────────
+// Dig申請（成果Digの申請・承認）
+// ─────────────────────────────────────────────
+export const DigApplicationStatus = z.enum(["申請中", "承認済", "却下"]);
+export type DigApplicationStatus = z.infer<typeof DigApplicationStatus>;
+
+export const DigApplicationSchema = z.object({
+  /** 申請主（Person ID） */
+  applicantId: z.string().min(1).max(32),
+  /** 契約管理DBの顧客ID（手入力／自動反映） */
+  companyId: z.string().max(64).nullable().default(null),
+  companyName: z.string().min(1).max(120),
+  /** 商材（例: AIテレアポ） */
+  productName: z.string().min(1).max(120),
+  /** 契約内容（例: 株式会社データラーニング、3ヵ月プラン） */
+  contractSummary: z.string().max(300).nullable().default(null),
+  /** 参照した契約レコードID（契約DB連携時のみ） */
+  contractId: z.string().max(64).nullable().default(null),
+  /** 獲得ポイント(D) */
+  grantedDig: z.number().nonnegative(),
+  /** 折半ポイント(D)。無しは 0 */
+  splitDig: z.number().nonnegative().default(0),
+  /** 折半相手（Person ID）。無しは null */
+  splitPartnerId: z.string().max(32).nullable().default(null),
+  /** 契約日 YYYY-MM-DD */
+  contractDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "契約日は YYYY-MM-DD 形式で入力してください"),
+  note: z.string().max(1000).nullable().default(null),
+});
+export type DigApplicationInput = z.infer<typeof DigApplicationSchema>;

@@ -334,7 +334,12 @@ export default function Page() {
             <MemberTable leg={leg} members={members} />
           </>
         ) : activeTab === "mypage" ? (
-          <MyPage personId={account.personId} canViewOthers={isAdmin} initialYm={ym} />
+          <MyPage
+            personId={account.personId}
+            canViewOthers={isAdmin}
+            initialYm={ym}
+            actorId={account.id}
+          />
         ) : activeTab === "bank" ? (
           <DiglossBank />
         ) : activeTab === "borrow-apply" ? (
