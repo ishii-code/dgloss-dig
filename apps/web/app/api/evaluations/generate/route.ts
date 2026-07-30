@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { YearMonth } from "@dig/contracts";
 import { z } from "zod";
 import { created, handle } from "@/server/http";
-import { generateEvaluations, pruneEvaluationsOutOfScope } from "@/server/repo";
+import { ensureInitialLoans, generateEvaluations, pruneEvaluationsOutOfScope } from "@/server/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +19,8 @@ export const POST = (req: NextRequest) =>
   handle(async () => {
     const b = Body.parse(await req.json());
     const pruned = await pruneEvaluationsOutOfScope(b.yearMonth, b.actor);
+    // 入社時の必須初回借入（自動承認）を未作成のメンバーに作成してから台帳を計算する。
+    const loans = await ensureInitialLoans(b.actor);
     const result = await generateEvaluations(b.yearMonth, b.actor);
-    return created({ ...result, pruned: pruned.deleted });
+    return created({ ...result, pruned: pruned.deleted, initialLoansCreated: loans.created });
   });
