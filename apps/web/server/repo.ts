@@ -407,8 +407,34 @@ export async function updateSetting(input: {
 // ─────────────────────────────────────────────
 // アカウント・権限（RBAC）
 // ─────────────────────────────────────────────
-export const listAccounts = () =>
-  prisma.account.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] });
+/**
+ * アカウント一覧。従業員マスタの事業部を添えて返す（画面で対象事業部に絞るため）。
+ * 従業員と紐付いていないアカウントの division は null。
+ */
+export async function listAccounts() {
+  const [accounts, members] = await Promise.all([
+    prisma.account.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] }),
+    prisma.member.findMany({ select: { personId: true, division: true, status: true } }),
+  ]);
+  const byPerson = new Map(members.map((m) => [m.personId, m]));
+  return accounts.map((a) => {
+    const m = a.personId ? byPerson.get(a.personId) : undefined;
+    return {
+      id: a.id,
+      email: a.email,
+      name: a.name,
+      role: a.role,
+      personId: a.personId,
+      active: a.active,
+      division: m?.division ?? null,
+      memberStatus: m?.status ?? null,
+      /** パスワード発行済みか（平文は返さない） */
+      hasPassword: Boolean(a.passwordHash),
+      mustChangePassword: a.mustChangePassword,
+      lastLoginAt: a.lastLoginAt,
+    };
+  });
+}
 
 export async function upsertAccount(input: {
   id: string; email: string; name: string; role: string; personId: string | null; active: boolean; actor: string;
