@@ -478,6 +478,7 @@ export type Account = z.infer<typeof AccountSchema>;
  */
 export const TAB_MIN_LEVEL: Record<string, number> = {
   monitor: 0,
+  mypage: 0, // 全員（本人の実績。ADMIN以上は他メンバーも閲覧可）
   members: 0,
   bank: 0,
   bonus: 0,

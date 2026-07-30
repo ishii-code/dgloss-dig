@@ -16,6 +16,7 @@ import { DiglossBank, FinanceConsole } from "@/components/bank";
 import type { CurrentAccount } from "@/components/loan-thread";
 import { LoanApply } from "@/components/loans-apply";
 import { MemberMaster } from "@/components/masters";
+import { MyPage } from "@/components/my-page";
 import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
 import { PeriodClose } from "@/components/period-close";
 import { FeatureRequests } from "@/components/requests";
@@ -44,6 +45,7 @@ import { buildMembersFromDb, type EvaluationDto, type MemberDto } from "@/lib/ev
 
 const TABS: Tab[] = [
   { key: "monitor", label: "予実モニター", sub: "毎日更新" },
+  { key: "mypage", label: "マイページ", sub: "自分の実績" },
   { key: "members", label: "メンバー評価", sub: "月次更新" },
   { key: "bank", label: "Dig Bank", sub: "借入・返済" },
   { key: "borrow-apply", label: "借入申請", sub: "会社/相対" },
@@ -331,6 +333,8 @@ export default function Page() {
             <SectionHeader title="メンバー評価（残高計算）" note="予算Dig vs 実績Dig" />
             <MemberTable leg={leg} members={members} />
           </>
+        ) : activeTab === "mypage" ? (
+          <MyPage personId={account.personId} canViewOthers={isAdmin} initialYm={ym} />
         ) : activeTab === "bank" ? (
           <DiglossBank />
         ) : activeTab === "borrow-apply" ? (
