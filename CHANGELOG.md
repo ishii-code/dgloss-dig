@@ -1,3 +1,10 @@
+## [1.25.2](https://github.com/ishii-code/dgloss-dig/compare/v1.25.1...v1.25.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **members:** 事業部の個別指定を保持・編集をモーダル化／feat: jinjerメール項目の診断 ([#67](https://github.com/ishii-code/dgloss-dig/issues/67)) ([0516cbc](https://github.com/ishii-code/dgloss-dig/commit/0516cbc1eef784b8a39ce09748532b950cf17318))
+
 ## [1.25.1](https://github.com/ishii-code/dgloss-dig/compare/v1.25.0...v1.25.1) (2026-07-30)
 
 
