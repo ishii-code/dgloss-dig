@@ -117,12 +117,9 @@ export function AccountsAdmin() {
   }, []);
 
   // 在籍メンバーへユーザー権限のアカウントを一括発行（既存アカウントの権限は変更しない）。
-  async function provision(scope: "target" | "all", reset = false) {
+  async function provision(scope: "target" | "all") {
     const label = scope === "target" ? "評価対象事業部" : "全在籍メンバー";
-    const note = reset
-      ? "\n※ 既にパスワードを設定済みの人も仮パスワードにリセットされます。"
-      : "\n※ 既にパスワードがある人は変更しません。";
-    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントと仮パスワードを発行します。${note}\nよろしいですか？`)) return;
+    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントを作成します。\n（仮パスワードは作成後に「表示中のメンバーに仮パスワードを発行」で発行します）\nよろしいですか？`)) return;
     setBusy(true);
     setMsg(`${label}のアカウントを発行中…`);
     try {
@@ -130,19 +127,85 @@ export function AccountsAdmin() {
         actor: ACTOR,
         scope,
         role: "USER",
-        // 各自の仮パスワードを同時に生成する（平文は応答でのみ受け取る）。
-        issuePasswords: true,
-        resetExisting: reset,
+        // パスワードは件数が多いとタイムアウトするため、ここでは作らない。
+        // 発行は下の「表示中のメンバーに仮パスワードを発行」で分割実行する。
+        issuePasswords: false,
       });
       setResult(res);
       const parts = [`対象${res.targets}名`, `新規${res.created}件`, `既存${res.updated}件（権限は変更なし）`];
-      parts.push(`仮パスワード発行${res.credentials.length}件`);
       if (res.placeholders.length > 0) parts.push(`仮メール${res.placeholders.length}件（要修正）`);
       if (res.skipped.length > 0) parts.push(`スキップ${res.skipped.length}件`);
-      setMsg(`アカウント発行完了: ${parts.join(" / ")}`);
+      setMsg(`アカウント作成完了: ${parts.join(" / ")}\n続けて「表示中のメンバーに仮パスワードを発行」を押してください。`);
       await load();
     } catch (e) {
       setMsg(`発行失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * 一覧に表示中のアカウントへ仮パスワードを発行する。
+   * ハッシュ化は意図的に重いため、25件ずつに分けて呼び出す
+   * （全件を1リクエストで処理すると実行時間制限でタイムアウトする）。
+   */
+  async function issuePasswordsForDisplayed(reset: boolean) {
+    const ids = accounts.map((a) => a.id);
+    if (ids.length === 0) {
+      setMsg("表示中のアカウントがありません");
+      return;
+    }
+    const note = reset
+      ? "既にパスワードを設定済みの人も仮パスワードにリセットされます。"
+      : "既にパスワードがある人はそのままにします。";
+    if (!confirm(`表示中の ${ids.length} 名へ仮パスワードを発行します。\n${note}\nよろしいですか？`)) return;
+
+    const CHUNK = 25;
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+
+    setBusy(true);
+    const credentials: ProvisionResult["credentials"] = [];
+    let skipped = 0;
+    try {
+      for (let i = 0; i < chunks.length; i++) {
+        setMsg(`仮パスワードを発行中… ${i + 1}/${chunks.length}（${credentials.length}件発行済み）`);
+        const r = await apiSend<{
+          credentials: Array<{ id: string; name: string; email: string; temporaryPassword: string }>;
+          skipped: number;
+        }>("/api/accounts/passwords", "POST", { ids: chunks[i], actor: ACTOR, resetExisting: reset });
+        credentials.push(
+          ...r.credentials.map((c) => ({ personId: "", name: c.name, email: c.email, temporaryPassword: c.temporaryPassword })),
+        );
+        skipped += r.skipped;
+      }
+      setResult({
+        scope: "displayed",
+        divisions: null,
+        targets: ids.length,
+        created: 0,
+        updated: credentials.length,
+        skipped: [],
+        placeholders: [],
+        credentials,
+      });
+      setMsg(
+        `仮パスワードを発行しました: ${credentials.length}件` +
+          (skipped > 0 ? ` / 既にパスワードがあるため据え置き ${skipped}件` : "") +
+          `\n下の一覧をコピーまたはCSVで控えてから画面を離れてください（再表示できません）。`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(
+        `発行に失敗しました: ${(e as Error).message}\n` +
+          `※ ここまでに発行済みの ${credentials.length} 件は有効です。下の一覧を控えてから再実行してください。`,
+      );
+      if (credentials.length > 0) {
+        setResult({
+          scope: "displayed", divisions: null, targets: ids.length, created: 0,
+          updated: credentials.length, skipped: [], placeholders: [], credentials,
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -218,7 +281,11 @@ export function AccountsAdmin() {
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">DB未接続のためモック表示です。</div>
       )}
-      {msg && <div className="mb-3 rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">{msg}</div>}
+      {msg && (
+        <div className="mb-3 whitespace-pre-wrap rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">
+          {msg}
+        </div>
+      )}
 
       {/* 一括発行（従業員マスタ → ユーザー権限アカウント） */}
       <div className="mb-4 rounded-card border border-surface-border bg-white p-4 shadow-card">
@@ -227,6 +294,8 @@ export function AccountsAdmin() {
           在籍メンバー全員へ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使用し、
           取得できない人は <span className="tabular">従業員ID@{"dgloss.co.jp"}</span> の仮メールで発行します（下に一覧表示・要修正）。
           既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
+          仮パスワードは<b>下の一覧に表示中のアカウント</b>に対して発行します（25名ずつ分割して実行するため、
+          人数が多くてもタイムアウトしません）。既にパスワードがある人は「再発行」を選んだときだけ作り直します。
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -244,11 +313,18 @@ export function AccountsAdmin() {
             全在籍メンバーに発行
           </button>
           <button
-            onClick={() => void provision("all", true)}
+            onClick={() => void issuePasswordsForDisplayed(false)}
+            disabled={busy}
+            className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white disabled:opacity-50"
+          >
+            表示中のメンバーに仮パスワードを発行
+          </button>
+          <button
+            onClick={() => void issuePasswordsForDisplayed(true)}
             disabled={busy}
             className="rounded-card border border-semantic-warn px-4 py-1.5 text-sm font-bold text-semantic-warn disabled:opacity-50"
           >
-            全員の仮パスワードを再発行
+            表示中のメンバーの仮パスワードを再発行
           </button>
         </div>
 

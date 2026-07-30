@@ -593,6 +593,14 @@ export async function provisionMemberAccounts(input: {
     credentials: [],
   };
 
+  // 既存アカウントを事前に一括取得する（1件ずつ問い合わせると往復が多く、
+  // 人数が増えたときにサーバの実行時間制限に当たるため）。
+  const allAccounts = await prisma.account.findMany({
+    select: { id: true, email: true, personId: true, passwordHash: true },
+  });
+  const byPersonId = new Map(allAccounts.filter((a) => a.personId).map((a) => [a.personId as string, a]));
+  const byEmail = new Map(allAccounts.map((a) => [a.email, a]));
+
   for (const m of members) {
     const real = (m.email ?? "").trim().toLowerCase();
     const email = real || `${m.personId.toLowerCase()}@${ACCOUNT_EMAIL_DOMAIN}`;
@@ -603,9 +611,7 @@ export async function provisionMemberAccounts(input: {
     if (!real) result.placeholders.push({ personId: m.personId, name: m.name, email });
 
     // 既存（personId 紐付け or 同一メール）があれば role は触らず紐付けと氏名だけ更新。
-    const existing =
-      (await prisma.account.findFirst({ where: { personId: m.personId } })) ??
-      (await prisma.account.findFirst({ where: { email } }));
+    const existing = byPersonId.get(m.personId) ?? byEmail.get(email);
     if (existing) {
       // パスワード未設定（または再発行指定）のときだけ仮パスワードを発行する。
       const needPassword =
@@ -677,6 +683,43 @@ export async function issueTemporaryPassword(accountId: string, actor: string) {
   });
   await audit(actor, "account.password.issue", "Account", accountId, {});
   return { id: acc.id, email: acc.email, name: acc.name, temporaryPassword: temp };
+}
+
+/**
+ * 指定したアカウントへ仮パスワードを発行する（分割実行用）。
+ * 1リクエストの処理量を呼び出し側で制御できるようにし、件数が多くても
+ * サーバの実行時間制限に当たらないようにする。
+ * 既にパスワードがある人は resetExisting=true のときだけ再発行する。
+ */
+export async function issueTemporaryPasswords(
+  ids: string[],
+  actor: string,
+  resetExisting = false,
+) {
+  const accounts = await prisma.account.findMany({ where: { id: { in: ids } } });
+  const credentials: Array<{ id: string; name: string; email: string; temporaryPassword: string }> = [];
+  let skipped = 0;
+
+  for (const acc of accounts) {
+    if (acc.passwordHash && !resetExisting) {
+      skipped += 1; // 既に本人のパスワードがある人は触らない
+      continue;
+    }
+    const temp = generateTemporaryPassword();
+    await prisma.account.update({
+      where: { id: acc.id },
+      data: { passwordHash: hashPassword(temp), mustChangePassword: true },
+    });
+    credentials.push({ id: acc.id, name: acc.name, email: acc.email, temporaryPassword: temp });
+  }
+
+  // 平文は監査ログに残さない（件数のみ）。
+  await audit(actor, "account.password.issue.bulk", "Account", null, {
+    requested: ids.length,
+    issued: credentials.length,
+    skipped,
+  });
+  return { credentials, skipped, notFound: ids.length - accounts.length };
 }
 
 /**
