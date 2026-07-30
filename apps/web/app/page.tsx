@@ -98,6 +98,11 @@ export default function Page() {
   const account = ACCOUNTS[role];
   const t = useMemo(() => totalsOf(members, leg), [members, leg]);
   const divs = useMemo(() => byDivisionOf(members, leg), [members, leg]);
+  // 役職ベース未設定の人数（予算Digが座席コスト分のみになる）。
+  const missingPositionBase = useMemo(
+    () => members.filter((m) => m.positionBase !== undefined && m.positionBase <= 0).length,
+    [members],
+  );
 
   // 未読数（iPhoneバッジ風）を取得
   const refreshUnread = useCallback(async () => {
@@ -263,6 +268,14 @@ export default function Page() {
         )}
         {genMsg && <div className="mt-2 text-xs text-ink-muted">{genMsg}</div>}
 
+        {/* 役職ベース未設定の警告（予算Digが座席コスト分だけになる原因を明示） */}
+        {source === "db" && missingPositionBase > 0 && (
+          <div className="mt-3 rounded-card border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-semantic-warn">
+            役職ベースが未設定のメンバーが {missingPositionBase} 名います。予算Digが座席コスト分（正社員140万／アルバイト60万）のみになります。
+            従業員マスタ →「役職ベースの入力」で金額を設定し、この画面で「評価台帳を再計算」してください。
+          </div>
+        )}
+
         {activeTab === "monitor" ? (
           <>
             {/* 全社 */}
@@ -355,6 +368,7 @@ function MemberTable({ leg, members }: { leg: Leg; members: MemberRow[] }) {
           <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
             <th className="px-4 py-2.5 font-semibold">氏名</th>
             <th className="px-4 py-2.5 font-semibold">事業部</th>
+            <th className="px-4 py-2.5 text-right font-semibold">役職ベース</th>
             <th className="px-4 py-2.5 text-right font-semibold">予算Dig</th>
             <th className="px-4 py-2.5 text-right font-semibold">実績Dig</th>
             <th className="px-4 py-2.5 text-right font-semibold">達成率</th>
@@ -372,6 +386,17 @@ function MemberTable({ leg, members }: { leg: Leg; members: MemberRow[] }) {
               <tr key={m.personId} className="border-b border-surface-border last:border-0">
                 <td className="px-4 py-2.5 font-medium text-ink">{m.name}</td>
                 <td className="px-4 py-2.5 text-ink-muted">{m.division}</td>
+                <td className="px-4 py-2.5 text-right">
+                  {m.positionBase === undefined ? (
+                    <span className="text-ink-faint">—</span>
+                  ) : m.positionBase > 0 ? (
+                    <span className="text-ink-muted">{man(m.positionBase)}</span>
+                  ) : (
+                    <span className="font-semibold text-semantic-warn" title="役職ベースが未設定のため予算Digが座席コスト分のみになっています">
+                      未設定
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-right text-ink-muted">{man(budget)}</td>
                 <td className="px-4 py-2.5 text-right font-semibold text-ink">
                   {man(l.actualDig)}

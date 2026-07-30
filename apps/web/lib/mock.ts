@@ -47,6 +47,8 @@ export interface MemberRow {
   cycle: EvaluationCycle;
   eval: MonthlyEvaluationResult;
   incentive: number;
+  /** 役職ベース（予算Digの計算元）。実データ表示時のみ設定される。 */
+  positionBase?: number;
 }
 
 export const MEMBERS: MemberRow[] = SEEDS.map((s) => {
