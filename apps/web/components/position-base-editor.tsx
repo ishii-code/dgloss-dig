@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { SALARY_GRADES, SALARY_ROW_ORDER, SALARY_TABLE } from "@dig/contracts";
 import { apiGet, apiSend } from "@/lib/api";
 import { yen } from "@/lib/format";
 import { SectionHeader } from "./ui";
@@ -22,22 +21,15 @@ interface Row {
   positionBase: number;
   evaluationCycle: string;
   salaryGrade: string | null;
-  salaryRow: number | null;
 }
 
-/** 役職 → 給与テーブルの等級（既定値の推定用）。 */
-const POSITION_TO_GRADE: Record<string, string> = {
-  メンバー: "A",
-  リーダー: "B",
-  マネージャー: "D",
-  部長: "E",
-};
-
-/** 行ラベル（1〜9=テーブルA/上、0=基準、10〜18=テーブルB/下）。 */
-function rowLabel(row: number): string {
-  if (row === 0) return "基準(0)";
-  return row <= 9 ? `上A-${row}` : `下B-${row}`;
+interface RangeRow {
+  position: string;
+  grade: string;
+  amount: number;
 }
+
+const RANGES = ["A", "B", "C"] as const;
 
 /**
  * 役職ベースの一括入力。予算Dig は役職ベースから計算されるが jinjer には
@@ -47,10 +39,11 @@ export function PositionBaseEditor() {
   const [division, setDivision] = useState(DEFAULT_DIVISION);
   const [divisions, setDivisions] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
+  const [ranges, setRanges] = useState<RangeRow[]>([]);
   const [edit, setEdit] = useState<
     Record<
       string,
-      { position?: string; positionBase?: number; evaluationCycle?: string; salaryGrade?: string; salaryRow?: number }
+      { position?: string; positionBase?: number; evaluationCycle?: string; salaryGrade?: string }
     >
   >({});
   const [msg, setMsg] = useState<string | null>(null);
@@ -90,11 +83,12 @@ export function PositionBaseEditor() {
 
   const load = useCallback(async () => {
     try {
-      const d = await apiGet<{ members: Row[]; divisions: string[] }>(
+      const d = await apiGet<{ members: Row[]; divisions: string[]; ranges: RangeRow[] }>(
         `/api/members/position-base?division=${encodeURIComponent(division)}`,
       );
       setRows(d.members ?? []);
       setDivisions(d.divisions ?? []);
+      setRanges(d.ranges ?? []);
       setEdit({});
     } catch (e) {
       setMsg(`読み込み失敗: ${(e as Error).message}`);
@@ -104,43 +98,67 @@ export function PositionBaseEditor() {
     void load();
   }, [load]);
 
+  /** 役職 → {A|B|C: 金額} の索引（給与レンジ表）。 */
+  const rangeMap: Record<string, Record<string, number>> = {};
+  for (const r of ranges) {
+    rangeMap[r.position] ??= {};
+    rangeMap[r.position][r.grade] = Number(r.amount);
+  }
+
   const valueOf = (r: Row) => {
     const e = edit[r.personId];
+    const position = e?.position ?? r.position;
     const grade = e?.salaryGrade ?? r.salaryGrade ?? "";
-    const row = e?.salaryRow ?? (r.salaryRow ?? null);
-    // 等級 × 行 が揃えば給与テーブルの金額が役職ベースになる。
-    const fromTable = grade && row !== null ? SALARY_TABLE[grade]?.[row] : undefined;
+    // レンジ(A/B/C)が決まれば給与レンジ表の金額が役職ベースになる。
+    const fromRange = grade ? rangeMap[position]?.[grade] : undefined;
+    // 給与（月額。時給者は160h換算）に最も近いレンジ＝推奨。
+    const salary = Number(r.basePay) > 0 ? Number(r.basePay) : Math.round(Number(r.hourlyWage ?? 0) * 160);
+    let suggested = "";
+    const cand = rangeMap[position];
+    if (cand && salary > 0) {
+      let best: [string, number] | null = null;
+      for (const entry of Object.entries(cand)) {
+        if (!best || Math.abs(entry[1] - salary) < Math.abs(best[1] - salary)) best = entry;
+      }
+      suggested = best ? best[0] : "";
+    }
     return {
-      position: e?.position ?? r.position,
+      position,
       evaluationCycle: e?.evaluationCycle ?? r.evaluationCycle,
       grade,
-      row,
-      positionBase: fromTable ?? e?.positionBase ?? Number(r.positionBase ?? 0),
-      fromTable: typeof fromTable === "number",
+      salary,
+      suggested,
+      positionBase: fromRange ?? e?.positionBase ?? Number(r.positionBase ?? 0),
+      fromRange: typeof fromRange === "number",
     };
   };
 
   function setField(
     personId: string,
-    patch: { position?: string; positionBase?: number; evaluationCycle?: string; salaryGrade?: string; salaryRow?: number },
+    patch: { position?: string; positionBase?: number; evaluationCycle?: string; salaryGrade?: string },
   ) {
     setEdit((prev) => ({ ...prev, [personId]: { ...prev[personId], ...patch } }));
   }
 
-  /** 役職から等級を推定し、行は基準(0)を既定にする（そこから個別調整）。 */
-  function fillFromPosition() {
-    const next = { ...edit };
-    for (const r of rows) {
-      const v = valueOf(r);
-      const grade = POSITION_TO_GRADE[v.position] ?? "A";
-      next[r.personId] = {
-        ...next[r.personId],
-        salaryGrade: v.grade || grade,
-        salaryRow: v.row ?? 0,
-      };
+  /** 実際の給与に最も近いレンジ(A/B/C)を自動判定して役職ベースを設定（サーバ側で実行）。 */
+  async function autoAssign() {
+    setBusy(true);
+    setMsg("⏳ 給与からレンジを自動判定中…");
+    try {
+      const r = await apiSend<{ updated: number; skipped: number; total: number }>(
+        "/api/members/position-base",
+        "POST",
+        { actor: ACTOR, mode: "auto", division },
+      );
+      setMsg(
+        `レンジを自動判定しました: ${r.updated}名に役職ベースを設定（給与未取得などで対象外 ${r.skipped}名 / 全${r.total}名）。予実モニターで「評価台帳を再計算」してください。`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`自動判定に失敗: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
     }
-    setEdit(next);
-    setMsg("役職から等級を設定し、行は基準(0)にしました。実際の等級・行に調整して保存してください。");
   }
 
   async function save() {
@@ -213,11 +231,11 @@ export function PositionBaseEditor() {
         </select>
         <span className="text-xs text-ink-muted">{rows.length}名</span>
         <button
-          onClick={fillFromPosition}
+          onClick={() => void autoAssign()}
           disabled={busy || rows.length === 0}
           className="ml-auto rounded-card border border-surface-border px-3 py-1.5 text-xs font-semibold text-ink-muted disabled:opacity-50"
         >
-          役職から等級を初期設定
+          給与からレンジを自動判定
         </button>
         <button
           onClick={() => void save()}
@@ -240,8 +258,7 @@ export function PositionBaseEditor() {
               <th className="px-3 py-2 font-semibold">雇用</th>
               <th className="px-3 py-2 text-right font-semibold">基本給（参考）</th>
               <th className="px-3 py-2 font-semibold">役職</th>
-              <th className="px-3 py-2 font-semibold">等級（給与テーブル）</th>
-              <th className="px-3 py-2 font-semibold">行</th>
+              <th className="px-3 py-2 font-semibold">レンジ（A/B/C）</th>
               <th className="px-3 py-2 font-semibold">評価サイクル</th>
               <th className="px-3 py-2 text-right font-semibold">役職ベース</th>
             </tr>
@@ -249,7 +266,7 @@ export function PositionBaseEditor() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-3 py-3 text-ink-muted">
+                <td colSpan={7} className="px-3 py-3 text-ink-muted">
                   この事業部の在籍メンバーがいません
                 </td>
               </tr>
@@ -291,28 +308,25 @@ export function PositionBaseEditor() {
                         className="rounded-card border border-surface-border px-2 py-1 text-sm"
                       >
                         <option value="">未設定</option>
-                        {SALARY_GRADES.map((g) => (
-                          <option key={g.grade} value={g.grade}>
-                            {g.grade}：{g.role}
-                          </option>
-                        ))}
+                        {RANGES.map((g) => {
+                          const amount = rangeMap[v.position]?.[g];
+                          return (
+                            <option key={g} value={g}>
+                              {g}
+                              {amount ? `（${amount.toLocaleString()}円）` : ""}
+                            </option>
+                          );
+                        })}
                       </select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <select
-                        value={v.row ?? ""}
-                        onChange={(e) =>
-                          setField(r.personId, { salaryRow: e.target.value === "" ? undefined : Number(e.target.value) })
-                        }
-                        className="rounded-card border border-surface-border px-2 py-1 text-sm"
-                      >
-                        <option value="">未設定</option>
-                        {SALARY_ROW_ORDER.map((row) => (
-                          <option key={row} value={row}>
-                            {rowLabel(row)}
-                          </option>
-                        ))}
-                      </select>
+                      {v.suggested && v.suggested !== v.grade && (
+                        <button
+                          onClick={() => setField(r.personId, { salaryGrade: v.suggested })}
+                          className="ml-1 text-[11px] text-brand-primary underline"
+                          title={`給与 ${v.salary.toLocaleString()}円 に最も近いレンジ`}
+                        >
+                          推奨{v.suggested}
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <select
@@ -328,9 +342,9 @@ export function PositionBaseEditor() {
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {v.fromTable ? (
-                        // 等級×行から自動算出（給与テーブル参照）
-                        <span className="font-semibold text-ink" title="給与テーブルから自動算出">
+                      {v.fromRange ? (
+                        // レンジ(A/B/C)から自動算出（給与レンジ表を参照）
+                        <span className="font-semibold text-ink" title="給与レンジ表から自動算出">
                           {yen(v.positionBase)}
                         </span>
                       ) : (
@@ -350,7 +364,7 @@ export function PositionBaseEditor() {
         </table>
       </div>
       <div className="mt-2 text-[11px] text-ink-faint">
-        ※ 等級×行を選ぶと全社統一給与テーブルの金額が役職ベースになります。保存後、予実モニターで「評価台帳を再計算」してください。
+        ※ レンジ(A/B/C)を選ぶと給与レンジ表（役職×A/B/C）の金額が役職ベースになります。保存後、予実モニターで「評価台帳を再計算」してください。
       </div>
     </>
   );
