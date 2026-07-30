@@ -177,8 +177,8 @@ function asEmail(v: string): string {
 }
 
 /**
- * 会社メールを拾う。jinjer の項目名が環境で揺れるため候補キーを順に見る
- * （company → personal → top-level）。会社用を優先し、私用メールは後ろに置く。
+ * 会社メールの候補キー。jinjer の項目名が環境で揺れるためこの順に見る。
+ * 実データでは company.email に会社メール（@dgloss.co.jp）が入っている。
  */
 const MAIL_KEYS = [
   "company_mail_address",
@@ -191,8 +191,37 @@ const MAIL_KEYS = [
   "mail",
   "email",
   "mail_address1",
-  "private_mail_address",
 ];
+
+/**
+ * 私用メールのドメイン。アカウントのログインIDに使うと社内システムとして不適切なため、
+ * 会社メールとしては採用しない（該当者は仮メールで発行し、画面に「要修正」で出す）。
+ */
+const PERSONAL_MAIL_DOMAINS = [
+  "gmail.com",
+  "yahoo.co.jp",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "outlook.com",
+  "outlook.jp",
+  "hotmail.com",
+  "hotmail.co.jp",
+  "live.jp",
+  "docomo.ne.jp",
+  "ezweb.ne.jp",
+  "au.com",
+  "softbank.ne.jp",
+  "i.softbank.jp",
+  "nifty.com",
+  "ocn.ne.jp",
+];
+
+/** 会社メールとして採用できるか（私用ドメインは除外）。 */
+function isCompanyMail(mail: string): boolean {
+  const domain = mail.split("@")[1] ?? "";
+  return domain !== "" && !PERSONAL_MAIL_DOMAINS.includes(domain);
+}
 
 // Member.position の Prisma enum（Position）に一致する値のみ許可。
 const VALID_POSITIONS = new Set(["部長", "マネージャー", "リーダー", "メンバー"]);
@@ -246,10 +275,11 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
   // Dig評価側で手入力した役職が同期のたびに消えるのを防ぐ。
   const position = VALID_POSITIONS.has(posRaw) ? posRaw : null;
 
-  const email =
-    asEmail(pick(company, ...MAIL_KEYS)) ||
-    asEmail(pick(personal, ...MAIL_KEYS)) ||
-    asEmail(pick(o, ...MAIL_KEYS));
+  // 会社メールのみ採用する（company → top-level）。personal は私用メール（gmail等）が
+  // 入っているため見ない。会社ドメイン以外も除外し、誤って私用メールでアカウントを
+  // 発行しないようにする（該当者は仮メールで発行し、画面に「要修正」で表示する）。
+  const mailCandidates = [asEmail(pick(company, ...MAIL_KEYS)), asEmail(pick(o, ...MAIL_KEYS))];
+  const email = mailCandidates.find((m) => m !== "" && isCompanyMail(m)) ?? "";
 
   // division/basePay は別エンドポイント（affiliations/salaries）で後から補完する。
   return {
@@ -422,6 +452,10 @@ export interface MailFieldStat {
   total: number;
   /** 例（ローカル部は伏せてドメインのみ） */
   sampleDomain: string;
+  /** 私用メールのドメイン（gmail等）と判定され、会社メールとして採用しない項目か */
+  personalDomain: boolean;
+  /** この項目が実際に取り込みで採用されるか（company/top-level かつ候補キーに一致） */
+  adopted: boolean;
 }
 
 export interface MailProbeResult {
@@ -430,6 +464,8 @@ export interface MailProbeResult {
   scanned: number;
   /** メール形式の値を1つ以上持っていた人数 */
   withMail: number;
+  /** 実際に取り込める会社メールを持っていた人数（＝実メールで発行できる人数） */
+  withCompanyMail: number;
   /** 取り込みロジックが見る候補キー（この順に採用） */
   usedKeys: string[];
   /** 項目別の充足状況（多い順） */
@@ -444,7 +480,10 @@ export interface MailProbeResult {
  */
 export async function probeMailFields(): Promise<MailProbeResult> {
   if (!jinjerConnected) {
-    return { connected: false, scanned: 0, withMail: 0, usedKeys: MAIL_KEYS, fields: [], unknownFields: [] };
+    return {
+      connected: false, scanned: 0, withMail: 0, withCompanyMail: 0,
+      usedKeys: MAIL_KEYS, fields: [], unknownFields: [],
+    };
   }
 
   const token = await getToken();
@@ -453,6 +492,7 @@ export async function probeMailFields(): Promise<MailProbeResult> {
   const unknown = new Set<string>();
   let scanned = 0;
   let withMail = 0;
+  let withCompanyMail = 0;
 
   // 数ページ分だけ調べる（全件は不要・タイムアウト回避）。
   for (let page = 1; page <= 3; page++) {
@@ -464,6 +504,12 @@ export async function probeMailFields(): Promise<MailProbeResult> {
     for (const rec of list) {
       scanned += 1;
       let hit = false;
+      // 実際の取り込みロジックが採用する値（company → top-level・私用ドメイン除外）。
+      const adoptedMail =
+        [asEmail(pick(asObj(rec["company"]), ...MAIL_KEYS)), asEmail(pick(rec, ...MAIL_KEYS))].find(
+          (m) => m !== "" && isCompanyMail(m),
+        ) ?? "";
+      if (adoptedMail) withCompanyMail += 1;
       // top-level / company / personal の各階層を走査する。
       const scopes: Array<[string, Record<string, unknown>]> = [
         ["", rec],
@@ -480,12 +526,24 @@ export async function probeMailFields(): Promise<MailProbeResult> {
 
           const path = `${prefix}${k}`;
           const mail = asEmail(raw);
-          const cur = stats.get(path) ?? { path, filled: 0, invalid: 0, total: 0, sampleDomain: "" };
+          const cur =
+            stats.get(path) ??
+            {
+              path,
+              filled: 0,
+              invalid: 0,
+              total: 0,
+              sampleDomain: "",
+              personalDomain: false,
+              // company / top-level かつ候補キーに一致する項目だけが取り込み対象。
+              adopted: prefix !== "personal." && MAIL_KEYS.includes(k),
+            };
           cur.total += 1;
           if (mail) {
             cur.filled += 1;
             hit = true;
             if (!cur.sampleDomain) cur.sampleDomain = `***@${mail.split("@")[1] ?? ""}`;
+            if (!isCompanyMail(mail)) cur.personalDomain = true;
           } else {
             cur.invalid += 1;
           }
@@ -502,6 +560,7 @@ export async function probeMailFields(): Promise<MailProbeResult> {
     connected: true,
     scanned,
     withMail,
+    withCompanyMail,
     usedKeys: MAIL_KEYS,
     fields: [...stats.values()].sort((a, b) => b.filled - a.filled),
     unknownFields: [...unknown],
