@@ -419,6 +419,97 @@ export async function deleteAccount(id: string, actor: string) {
   return { id };
 }
 
+/** アカウント一括発行のメール既定ドメイン（jinjer にメールが無い人の補完用）。 */
+const ACCOUNT_EMAIL_DOMAIN = process.env.ACCOUNT_EMAIL_DOMAIN ?? "dgloss.co.jp";
+
+export interface ProvisionAccountsResult {
+  /** 対象となった在籍メンバー数 */
+  targets: number;
+  created: number;
+  /** 既にアカウントがあり、権限を維持したまま氏名・紐付けだけ更新した数 */
+  updated: number;
+  /** メールが確定できず発行できなかった人 */
+  skipped: { personId: string; name: string; reason: string }[];
+  /** jinjer のメールが無く personId から仮メールを生成した人（要修正） */
+  placeholders: { personId: string; name: string; email: string }[];
+}
+
+/**
+ * 在籍メンバーへ USER 権限のアカウントを一括発行する。
+ * - メールは Member.email（jinjer 由来）を使い、無ければ `<personId小文字>@ACCOUNT_EMAIL_DOMAIN` を仮発行する
+ *   （仮メールは placeholders として返し、画面で「要修正」と分かるようにする）
+ * - 既存アカウントの role は変更しない（ADMIN / SUPER_ADMIN を降格させない）
+ * - divisions を渡すとその事業部のみ、省略時は全在籍メンバーが対象
+ */
+export async function provisionMemberAccounts(input: {
+  actor: string;
+  divisions?: string[];
+  role?: string;
+  /** true なら jinjer にメールが無い人を仮メールで発行しない（skipped に回す） */
+  requireRealEmail?: boolean;
+}): Promise<ProvisionAccountsResult> {
+  const role = (input.role ?? "USER") as Prisma.AccountCreateInput["role"];
+  const members = await prisma.member.findMany({
+    where: {
+      status: "在籍",
+      ...(input.divisions && input.divisions.length > 0 ? { division: { in: input.divisions } } : {}),
+    },
+    select: { personId: true, name: true, email: true },
+    orderBy: { personId: "asc" },
+  });
+
+  const result: ProvisionAccountsResult = {
+    targets: members.length,
+    created: 0,
+    updated: 0,
+    skipped: [],
+    placeholders: [],
+  };
+
+  for (const m of members) {
+    const real = (m.email ?? "").trim().toLowerCase();
+    const email = real || `${m.personId.toLowerCase()}@${ACCOUNT_EMAIL_DOMAIN}`;
+    if (!real && input.requireRealEmail) {
+      result.skipped.push({ personId: m.personId, name: m.name, reason: "jinjerにメールが無い" });
+      continue;
+    }
+    if (!real) result.placeholders.push({ personId: m.personId, name: m.name, email });
+
+    // 既存（personId 紐付け or 同一メール）があれば role は触らず紐付けと氏名だけ更新。
+    const existing =
+      (await prisma.account.findFirst({ where: { personId: m.personId } })) ??
+      (await prisma.account.findFirst({ where: { email } }));
+    if (existing) {
+      await prisma.account.update({
+        where: { id: existing.id },
+        data: { name: m.name, personId: m.personId, active: true },
+      });
+      result.updated += 1;
+      continue;
+    }
+    try {
+      await prisma.account.create({
+        data: { id: email, email, name: m.name, role, personId: m.personId, active: true },
+      });
+      result.created += 1;
+    } catch {
+      // メール重複などで作れないケースはスキップして続行する。
+      result.skipped.push({ personId: m.personId, name: m.name, reason: "アカウント作成に失敗（メール重複の可能性）" });
+    }
+  }
+
+  await audit(input.actor, "account.provision", "Account", null, {
+    divisions: input.divisions ?? "all",
+    role,
+    targets: result.targets,
+    created: result.created,
+    updated: result.updated,
+    skipped: result.skipped.length,
+    placeholders: result.placeholders.length,
+  });
+  return result;
+}
+
 // ─────────────────────────────────────────────
 // SP_CRM 連携（企業ID→担当者→自動帰属）
 // ─────────────────────────────────────────────
@@ -1762,6 +1853,7 @@ export async function syncFromJinjer(actor: string) {
           joinedOn,
           status: "在籍",
           ...(e.basePay > 0 ? { basePay: e.basePay } : {}),
+          ...(e.email ? { email: e.email } : {}),
         },
       });
       updated += 1;
@@ -1770,6 +1862,7 @@ export async function syncFromJinjer(actor: string) {
         data: {
           personId: e.personId,
           name: e.name,
+          email: e.email || null,
           division: e.division,
           position: e.position as Prisma.MemberCreateInput["position"],
           jobType: null,

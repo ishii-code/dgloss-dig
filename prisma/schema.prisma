@@ -256,6 +256,8 @@ model DigApplication {
 model Member {
   personId        String          @id
   name            String
+  /// 会社メール（jinjer 由来）。アカウント発行の宛先に使う
+  email           String?
   division        String
   /// jinjer 上の末端所属名（紐づけ再適用の原本）
   jinjerTeam      String?
