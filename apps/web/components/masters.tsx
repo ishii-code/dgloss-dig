@@ -205,8 +205,17 @@ export function MemberMaster() {
         connected: boolean;
         scanned: number;
         withMail: number;
+        withCompanyMail: number;
         usedKeys: string[];
-        fields: Array<{ path: string; filled: number; invalid: number; total: number; sampleDomain: string }>;
+        fields: Array<{
+          path: string;
+          filled: number;
+          invalid: number;
+          total: number;
+          sampleDomain: string;
+          personalDomain: boolean;
+          adopted: boolean;
+        }>;
         unknownFields: string[];
       }>("/api/members/jinjer-mail-fields", "POST", {});
       if (!r.connected) {
@@ -220,17 +229,31 @@ export function MemberMaster() {
         );
         return;
       }
-      const lines = r.fields.map(
-        (f) =>
+      const lines = r.fields.map((f) => {
+        const note = f.personalDomain
+          ? " ← 私用メール（アカウントには使いません）"
+          : f.adopted
+            ? " ← 採用"
+            : r.unknownFields.includes(f.path)
+              ? " ← 未対応（取り込めていません）"
+              : "";
+        return (
           `・${f.path}: メール形式 ${f.filled}名` +
           `${f.invalid > 0 ? ` / 形式外 ${f.invalid}名` : ""}` +
           `${f.sampleDomain ? `（例 ${f.sampleDomain}）` : ""}` +
-          `${r.unknownFields.includes(f.path) ? " ← 未対応（取り込めていません）" : ""}`,
-      );
-      let msg = `【jinjer メール項目】${r.scanned}名を確認 → メールを持つ人 ${r.withMail}名\n` + lines.join("\n");
-      msg += `\n取り込み候補キー: ${r.usedKeys.join(", ")}`;
+          note
+        );
+      });
+      let msg =
+        `【jinjer メール項目】${r.scanned}名を確認 → メールを持つ人 ${r.withMail}名` +
+        `／うち会社メールで発行できる人 ${r.withCompanyMail}名\n` +
+        lines.join("\n");
+      msg += `\n取り込み候補キー: ${r.usedKeys.join(", ")}（personal 配下は私用メールのため見ません）`;
       if (r.unknownFields.length > 0) {
         msg += `\n※「未対応」の項目名を教えてください。候補キーに追加すれば実メールで発行できます。`;
+      }
+      if (r.withCompanyMail < r.scanned) {
+        msg += `\n※ 会社メールが無い ${r.scanned - r.withCompanyMail}名は仮メール（従業員ID@ドメイン）で発行され、アカウント管理画面に「要修正」で表示されます。`;
       }
       setMsg(msg);
     } catch (e) {
