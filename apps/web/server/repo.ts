@@ -18,6 +18,7 @@ import {
   aggregateSeikaDig,
   buildInitialLoan,
   computeContractDig,
+  loanSchedule,
   cumulativeBudgetElapsed,
   cumulativeMonths,
   evaluateMonthly,
@@ -824,6 +825,152 @@ async function aggregateGroupEvaluations(yearMonth: string) {
     leaders += 1;
   }
   return { leaders };
+}
+
+
+// ─────────────────────────────────────────────
+// マイページ（本人の実績・借入・ボーナス・インセン）
+// ─────────────────────────────────────────────
+/**
+ * マイページ用データ。対象月リスト（四半期の各月）の評価推移、借入と返済予定、
+ * ボーナスDig、インセンティブ見込みをまとめて返す。
+ */
+export async function getMyPageData(personId: string, yearMonths: string[]) {
+  const member = await prisma.member.findUnique({ where: { personId } });
+  if (!member) throw new NotFoundError("member not found");
+
+  const [evals, loans, bonuses, group] = await Promise.all([
+    prisma.monthlyEvaluation.findMany({
+      where: { personId, yearMonth: { in: yearMonths } },
+      orderBy: { yearMonth: "asc" },
+    }),
+    prisma.loan.findMany({ where: { borrowerId: personId }, orderBy: { appliedOn: "asc" } }),
+    prisma.bonusDigRecord.findMany({
+      where: { personId, yearMonth: { in: yearMonths } },
+      orderBy: { recordedOn: "asc" },
+    }),
+    prisma.member.findMany({
+      where: { groupLeaderId: personId, status: "在籍" },
+      select: { personId: true, name: true },
+    }),
+  ]);
+
+  // 月次推移＋インセンティブ見込み（原資=成果+ボーナス、借入は除外: Q2/Q5案2）。
+  const months = yearMonths.map((ym) => {
+    const e = evals.find((x) => x.yearMonth === ym);
+    if (!e) {
+      return {
+        yearMonth: ym,
+        monthlyBudgetDig: 0,
+        monthlyActualDig: 0,
+        monthlyRate: 0,
+        monthlyRank: null as string | null,
+        cumulativeBudgetDig: 0,
+        cumulativeActualDig: 0,
+        cumulativeRate: 0,
+        seikaDig: 0,
+        bonusDig: 0,
+        loanDig: 0,
+        incentive: 0,
+        balance: 0,
+        finalized: false,
+      };
+    }
+    const seika = e.seikaDig.toNumber();
+    const bonus = e.bonusDig.toNumber();
+    const budget = e.monthlyBudgetDig.toNumber();
+    const qb = computeQuarterBalance({ personId, gross: seika, target: budget, bonus });
+    return {
+      yearMonth: ym,
+      monthlyBudgetDig: budget,
+      monthlyActualDig: e.monthlyActualDig.toNumber(),
+      monthlyRate: e.monthlyRate.toNumber(),
+      monthlyRank: e.monthlyRank as string,
+      cumulativeBudgetDig: e.cumulativeBudgetDig.toNumber(),
+      cumulativeActualDig: e.cumulativeActualDig.toNumber(),
+      cumulativeRate: e.cumulativeRate.toNumber(),
+      seikaDig: seika,
+      bonusDig: bonus,
+      loanDig: e.loanDig.toNumber(),
+      incentive: qb.incentive,
+      balance: qb.balance,
+      finalized: e.finalized,
+    };
+  });
+
+  // 借入ごとの返済予定と残高（元利均等・termMonths 回）。
+  const loanViews = loans.map((l) => {
+    const principal = l.principal.toNumber();
+    const rate = l.monthlyRate.toNumber();
+    const approved = l.status === "承認済" || l.status === "完済";
+    const schedule = approved && l.termMonths > 0 ? loanSchedule(principal, rate, l.termMonths) : [];
+    const totalRepayment = schedule.reduce((a, r) => a + r.repayment, 0);
+    const totalInterest = schedule.reduce((a, r) => a + r.interest, 0);
+    // 経過回数（承認月から現在まで）。返済済み回数の目安として残高を出す。
+    const paidCount = approved ? elapsedRepayments(l.approvedOn ?? l.appliedOn, l.termMonths) : 0;
+    const remaining = schedule.length > 0
+      ? (paidCount >= schedule.length ? 0 : schedule[Math.max(0, paidCount - 1)]?.closingBalance ?? principal)
+      : principal;
+    return {
+      id: l.id,
+      yearMonth: l.yearMonth,
+      lender: l.lender,
+      loanType: l.loanType as string,
+      status: l.status as string,
+      principal,
+      monthlyRatePct: rate * 100,
+      termMonths: l.termMonths,
+      appliedOn: l.appliedOn.toISOString().slice(0, 10),
+      approvedOn: l.approvedOn ? l.approvedOn.toISOString().slice(0, 10) : null,
+      totalRepayment,
+      totalInterest,
+      paidCount,
+      remaining: Math.max(0, remaining),
+      monthlyRepayment: schedule[0]?.repayment ?? 0,
+      note: l.note,
+    };
+  });
+
+  return {
+    member: {
+      personId: member.personId,
+      name: member.name,
+      division: member.division,
+      position: member.position as string,
+      employmentType: member.employmentType as string,
+      evaluationCycle: member.evaluationCycle as string,
+      joinedOn: member.joinedOn.toISOString().slice(0, 10),
+      positionBase: member.positionBase.toNumber(),
+      salaryGrade: member.salaryGrade,
+    },
+    months,
+    loans: loanViews,
+    bonuses: bonuses.map((b) => ({
+      yearMonth: b.yearMonth,
+      recordedOn: b.recordedOn.toISOString().slice(0, 10),
+      itemId: b.itemId,
+      grantedDig: b.grantedDig.toNumber(),
+      note: b.note,
+    })),
+    group,
+  };
+}
+
+/** 承認月から現在までの経過月数（返済回数の目安）。 */
+function elapsedRepayments(from: Date, termMonths: number): number {
+  const now = new Date();
+  const months =
+    (now.getUTCFullYear() - from.getUTCFullYear()) * 12 + (now.getUTCMonth() - from.getUTCMonth());
+  return Math.max(0, Math.min(termMonths, months));
+}
+
+/** マイページのメンバー選択用（ADMIN以上）。 */
+export async function listMembersForPicker() {
+  return prisma.member.findMany({
+    where: { status: "在籍" },
+    select: { personId: true, name: true, division: true },
+    orderBy: [{ division: "asc" }, { name: "asc" }],
+  });
 }
 
 // 初回借入の運用開始日。これより前に入社した既存メンバーは対象外（運用方針）。
