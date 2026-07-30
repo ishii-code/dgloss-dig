@@ -55,3 +55,16 @@ export function validatePassword(plain: string): string | null {
   if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) return "英字と数字をそれぞれ1文字以上含めてください";
   return null;
 }
+
+/** 文字列の定数時間比較（環境変数のシークレット照合に使う）。 */
+export function equalsConstantTime(a: string, b: string): boolean {
+  const ba = Buffer.from(a, "utf8");
+  const bb = Buffer.from(b, "utf8");
+  // 長さが違う場合も同じ処理量になるよう、長さを揃えてから比較する。
+  const len = Math.max(ba.length, bb.length, 1);
+  const pa = Buffer.alloc(len);
+  const pb = Buffer.alloc(len);
+  ba.copy(pa);
+  bb.copy(pb);
+  return timingSafeEqual(pa, pb) && ba.length === bb.length;
+}
