@@ -16,6 +16,7 @@ import type {
 import {
   achievementRate,
   aggregateSeikaDig,
+  buildInitialLoan,
   computeContractDig,
   evaluateMonthly,
   evaluationRank,
@@ -743,6 +744,76 @@ export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: strin
 }
 
 /**
+ * 入社時の必須初回借入（自動承認）を未作成のメンバーに作成する（要件 F-5・v1.2）。
+ * 対象は評価対象事業部の在籍者。yearMonth は入社month（借入が計上される月）。
+ * 既に「初回」借入があるメンバーはスキップ（冪等）。
+ */
+export async function ensureInitialLoans(actor: string) {
+  const targets = await listTargetDivisions();
+  const members = await prisma.member.findMany({
+    where: { status: "在籍", ...(targets.length > 0 ? { division: { in: targets } } : {}) },
+    select: { personId: true, joinedOn: true },
+  });
+  const existing = new Set(
+    (
+      await prisma.loan.findMany({
+        where: { loanType: "初回", borrowerId: { in: members.map((m) => m.personId) } },
+        select: { borrowerId: true },
+      })
+    ).map((l) => l.borrowerId),
+  );
+
+  let created = 0;
+  for (const m of members) {
+    if (existing.has(m.personId)) continue;
+    const joinedOn = m.joinedOn.toISOString().slice(0, 10);
+    const ym = joinedOn.slice(0, 7);
+    // 借入時点の設定（無ければ既定）を使い、レートを固定保持する。
+    const settingRow = await prisma.setting.findUnique({ where: { yearMonth: ym } });
+    const setting = settingRow ? toSetting(settingRow) : DEFAULT_SETTING;
+    const init = buildInitialLoan({
+      id: `init-${m.personId}`,
+      yearMonth: ym,
+      borrowerId: m.personId,
+      joinedOn,
+      setting,
+    });
+    await prisma.loan.create({
+      data: {
+        yearMonth: init.yearMonth,
+        borrowerId: init.borrowerId,
+        lender: init.lender,
+        loanType: init.loanType,
+        status: init.status,
+        principal: init.principal,
+        monthlyRate: init.monthlyRate,
+        termMonths: init.termMonths,
+        appliedOn: new Date(`${joinedOn}T00:00:00Z`),
+        approvedBy: init.approvedBy ?? null,
+        approvedOn: new Date(`${joinedOn}T00:00:00Z`),
+        note: init.note ?? null,
+      },
+    });
+    created += 1;
+  }
+  await audit(actor, "loan.initial.ensure", "Loan", null, { created, total: members.length });
+  return { created, total: members.length };
+}
+
+/** 対象月に計上される承認済借入の合計（社員別）。実績Digの借入分。 */
+async function loanDigMapFor(yearMonth: string): Promise<Map<string, number>> {
+  const loans = await prisma.loan.findMany({
+    where: { yearMonth, status: { in: ["承認済", "完済"] } },
+    select: { borrowerId: true, principal: true },
+  });
+  const map = new Map<string, number>();
+  for (const l of loans) {
+    map.set(l.borrowerId, (map.get(l.borrowerId) ?? 0) + l.principal.toNumber());
+  }
+  return map;
+}
+
+/**
  * 対象月の評価行を在籍メンバーから生成／再計算する。
  * - 未作成の personId は新規作成（成果Dig/ボーナス/借入は 0）。
  * - 既存かつ未確定の行は、現在のマスタ（役職ベース・雇用形態・入社日・
@@ -774,6 +845,8 @@ export async function generateEvaluations(
     }));
   const setting = toSetting(settingRow);
 
+  // 対象月に計上される承認済借入（入社時の初回借入を含む）を実績Digへ反映する。
+  const loanMap = await loanDigMapFor(yearMonth);
   // Dig制度の対象事業部に限定（未登録なら全事業部を対象＝従来動作）。
   const targets = await listTargetDivisions();
   const members = await prisma.member.findMany({
@@ -805,7 +878,8 @@ export async function generateEvaluations(
       // 実績を保持したまま、役職ベース等の変更を反映して再計算。
       const seika = prev.seikaDig.toNumber();
       const bonus = prev.bonusDig.toNumber();
-      const loan = prev.loanDig.toNumber();
+      // 借入は Loan テーブルを正とする（初回借入の自動計上に追随）。
+      const loan = loanMap.get(m.personId) ?? prev.loanDig.toNumber();
       const ev = evaluateMonthly({
         yearMonth,
         personId: m.personId,
@@ -857,7 +931,7 @@ export async function generateEvaluations(
       evaluationCycle: m.evaluationCycle as EvaluationCycle,
       seikaDig: 0,
       bonusDig: 0,
-      loanDig: 0,
+      loanDig: loanMap.get(m.personId) ?? 0,
       setting,
     });
     await prisma.monthlyEvaluation.create({
