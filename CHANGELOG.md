@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/ishii-code/dgloss-dig/compare/v1.20.0...v1.21.0) (2026-07-30)
+
+
+### Features
+
+* **bank:** 入社時の必須初回借入を自動作成し実績Digへ反映 ([#61](https://github.com/ishii-code/dgloss-dig/issues/61)) ([ce20cab](https://github.com/ishii-code/dgloss-dig/commit/ce20cab9f1dd94c3aa2a060306e0c8b006b5c8e4))
+
 # [1.20.0](https://github.com/ishii-code/dgloss-dig/compare/v1.19.1...v1.20.0) (2026-07-30)
 
 
