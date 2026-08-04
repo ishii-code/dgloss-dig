@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CG_INCENTIVE_RATE, DEFAULT_SETTING } from "@dig/contracts";
+import { canAccessTab, CG_INCENTIVE_RATE, DEFAULT_SETTING, TAB_MIN_LEVEL } from "@dig/contracts";
 import {
   barterDig,
   CG_SPLIT_RENEWAL_SALES_PCT,
@@ -709,5 +709,52 @@ describe("CGの獲得ルール（ルール登録から算定）", () => {
   it("営業向けの種別を渡しても 0（粗利ベースではない）", () => {
     const sales = { ruleType: "固定Dig" as const, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(cgRuleDig(sales, 300_000, 12).total).toBe(0);
+  });
+});
+
+describe("画面（タブ）の権限", () => {
+  // 未定義キーは既定0（全員可）に落ちるため、記載漏れが全員公開になる。
+  // 意図した公開範囲を固定して、設定漏れと区別できるようにする。
+  const EXPECTED: Record<string, number> = {
+    monitor: 0,
+    mypage: 0,
+    members: 0,
+    bank: 0,
+    "borrow-apply": 0,
+    bonus: 0,
+    txn: 0,
+    requests: 0,
+    release: 0,
+    salary: 0, // 全社統一給与テーブル（個人の給与は含まない）。意図的に全員公開
+    rules: 1,
+    "period-close": 1,
+    finance: 2,
+    master: 2,
+    accounts: 2,
+  };
+
+  it("全タブが権限マップに明示されている（未定義=全員公開の事故を防ぐ）", () => {
+    expect(Object.keys(TAB_MIN_LEVEL).sort()).toEqual(Object.keys(EXPECTED).sort());
+  });
+
+  it("各タブの公開範囲が意図どおり", () => {
+    expect(TAB_MIN_LEVEL).toEqual(EXPECTED);
+  });
+
+  it("ユーザー権限では管理系タブに入れない", () => {
+    for (const tab of ["rules", "period-close", "finance", "master", "accounts"]) {
+      expect(canAccessTab("USER", tab)).toBe(false);
+    }
+  });
+
+  it("ADMIN は従業員マスタ・アカウント管理・金融承認に入れない", () => {
+    for (const tab of ["finance", "master", "accounts"]) {
+      expect(canAccessTab("ADMIN", tab)).toBe(false);
+    }
+    expect(canAccessTab("ADMIN", "rules")).toBe(true);
+  });
+
+  it("給与テーブルは全員が見られる（等級制度の全社開示）", () => {
+    expect(canAccessTab("USER", "salary")).toBe(true);
   });
 });
