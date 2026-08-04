@@ -1,3 +1,11 @@
+# [1.32.0](https://github.com/ishii-code/dgloss-dig/compare/v1.31.0...v1.32.0) (2026-08-04)
+
+
+### Features
+
+* **rules:** バーター契約（相互発注）の獲得Digを追加 ([#79](https://github.com/ishii-code/dgloss-dig/issues/79)) ([8999c54](https://github.com/ishii-code/dgloss-dig/commit/8999c543bb9d1c89b5fd4ce1e6580ed2fe1504ef))
+* **transfer:** Dig譲渡（申請→受け手の承認）を実装 ([#80](https://github.com/ishii-code/dgloss-dig/issues/80)) ([8900464](https://github.com/ishii-code/dgloss-dig/commit/8900464dc9c08f0b1ea68f6eb00f0c25101fb929))
+
 # [1.31.0](https://github.com/ishii-code/dgloss-dig/compare/v1.30.0...v1.31.0) (2026-08-04)
 
 
