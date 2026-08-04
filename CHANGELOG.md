@@ -1,3 +1,10 @@
+## [1.38.1](https://github.com/ishii-code/dgloss-dig/compare/v1.38.0...v1.38.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **accounts:** 一覧から消えるアカウントを修正、タブ権限を明示、仮メールの本人変更 ([#88](https://github.com/ishii-code/dgloss-dig/issues/88)) ([be05db1](https://github.com/ishii-code/dgloss-dig/commit/be05db171113247af8f0d834aca42700b8e03d24))
+
 # [1.38.0](https://github.com/ishii-code/dgloss-dig/compare/v1.37.0...v1.38.0) (2026-08-04)
 
 
