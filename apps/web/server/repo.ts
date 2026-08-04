@@ -351,6 +351,8 @@ export async function upsertCalcRule(input: CalcRule, actor: string) {
     unitCall: input.unitCall,
     ratioPercent: input.ratioPercent,
     fixedDig: input.fixedDig,
+    marginRatePct: input.marginRatePct,
+    salesSharePct: input.salesSharePct,
     active: input.active,
   };
   const rule = await prisma.calcRule.upsert({
@@ -520,13 +522,16 @@ function toContract(row: {
 
 function toCalcRule(row: {
   id: string; division: string; name: string; ruleType: string; modelKeyFilter: string | null;
-  unitLine: Prisma.Decimal; unitCall: Prisma.Decimal; ratioPercent: Prisma.Decimal; fixedDig: Prisma.Decimal; active: boolean;
+  unitLine: Prisma.Decimal; unitCall: Prisma.Decimal; ratioPercent: Prisma.Decimal; fixedDig: Prisma.Decimal;
+  marginRatePct: Prisma.Decimal; salesSharePct: Prisma.Decimal; active: boolean;
 }): CalcRule {
   return {
     id: row.id, division: row.division, name: row.name,
     ruleType: row.ruleType as CalcRule["ruleType"], modelKeyFilter: row.modelKeyFilter,
     unitLine: row.unitLine.toNumber(), unitCall: row.unitCall.toNumber(),
-    ratioPercent: row.ratioPercent.toNumber(), fixedDig: row.fixedDig.toNumber(), active: row.active,
+    ratioPercent: row.ratioPercent.toNumber(), fixedDig: row.fixedDig.toNumber(),
+    marginRatePct: row.marginRatePct.toNumber(), salesSharePct: row.salesSharePct.toNumber(),
+    active: row.active,
   };
 }
 
@@ -1742,6 +1747,8 @@ function suggestDig(contract: Contract, division: string, rules: DbCalcRule[]): 
         unitCall: r.unitCall.toNumber(),
         ratioPercent: r.ratioPercent.toNumber(),
         fixedDig: r.fixedDig.toNumber(),
+        marginRatePct: r.marginRatePct.toNumber(),
+        salesSharePct: r.salesSharePct.toNumber(),
         active: r.active,
       } as CalcRule),
     );

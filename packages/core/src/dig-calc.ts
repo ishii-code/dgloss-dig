@@ -641,6 +641,43 @@ export function cgSplit(totalDig: number, salesPercent: number): { cg: number; s
   return { cg: totalDig - sales, sales };
 }
 
+/**
+ * 登録した獲得ルールを使って、CG の獲得Digと分配を求める。
+ * 契約管理DBに更新・アップセルの履歴が入るまでは Dig申請フォームからの手入力を想定し、
+ * 金額と月数を引数で受ける（ルールからは粗利率と分配率だけを使う）。
+ *
+ * @param rule ruleType が アップセル粗利 / 更新粗利 / チャーン損失 のルール
+ * @param monthlyAmount 対象の月額（アップセルなら増分、更新・チャーンなら契約月額）
+ * @param months 対象期間の月数（アップセルとチャーンは残契約月数、更新は更新期間）
+ * @param atRenewal チャーン損失のときだけ意味を持つ。更新月での解約（満了）なら true
+ */
+export function cgRuleDig(
+  rule: Pick<CalcRule, "ruleType" | "marginRatePct" | "salesSharePct" | "active">,
+  monthlyAmount: number,
+  months: number,
+  atRenewal = false,
+): { total: number; cg: number; sales: number } {
+  const none = { total: 0, cg: 0, sales: 0 };
+  if (!rule.active) return none;
+  const marginRate = rule.marginRatePct / 100;
+
+  switch (rule.ruleType) {
+    case "アップセル粗利":
+    case "更新粗利": {
+      const total = cgGrossDig(monthlyAmount, months, marginRate);
+      const split = cgSplit(total, rule.salesSharePct);
+      return { total, cg: split.cg, sales: split.sales };
+    }
+    case "チャーン損失": {
+      // マイナスは分配しない（チャーンは CG が負う）。
+      const total = cgChurnDig(monthlyAmount, months, atRenewal, marginRate);
+      return { total, cg: total, sales: 0 };
+    }
+    default:
+      return none;
+  }
+}
+
 // ── 事業部別の Dig予算設定（組織ツリーで継承） ──
 /**
  * 組織ごとに上書きできる Dig予算設定。null は「上位組織を継承」を意味する。

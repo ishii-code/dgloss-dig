@@ -25,6 +25,10 @@ model CalcRule {
   unitCall       Decimal      @default(0) @db.Decimal(14, 2)
   ratioPercent   Decimal      @default(0) @db.Decimal(7, 2)
   fixedDig       Decimal      @default(0) @db.Decimal(14, 2)
+  /// 粗利率(%)。アップセル粗利／更新粗利／チャーン損失で使う
+  marginRatePct  Decimal      @default(50) @db.Decimal(5, 2)
+  /// 初回担当営業への分配率(%)。残りが CG の取り分
+  salesSharePct  Decimal      @default(0) @db.Decimal(5, 2)
   active         Boolean      @default(true)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -159,6 +163,9 @@ enum CalcRuleType {
   月額基本料金割合
   固定Dig
   バーター契約
+  アップセル粗利
+  更新粗利
+  チャーン損失
 }
 
 enum Role {

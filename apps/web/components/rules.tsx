@@ -4,12 +4,25 @@ import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { man, yen } from "@/lib/format";
 import { ChurnAlerts } from "./churn-alerts";
+import { DivisionSchemeCard, type DivisionScheme } from "./division-scheme";
 import { DivisionSettings } from "./division-settings";
 import { SectionHeader } from "./ui";
 
 const ACTOR = "B0000071";
 const YM = "2026-01";
-const RULE_TYPES = ["回線コール単価", "初回発注1to1", "月額基本料金割合", "固定Dig", "バーター契約"] as const;
+const RULE_TYPES = [
+  "回線コール単価",
+  "初回発注1to1",
+  "月額基本料金割合",
+  "固定Dig",
+  "バーター契約",
+  "アップセル粗利",
+  "更新粗利",
+  "チャーン損失",
+] as const;
+
+/** 粗利率・分配率を使う種別（カスタマーグロース向け）。 */
+const MARGIN_TYPES: readonly string[] = ["アップセル粗利", "更新粗利", "チャーン損失"];
 
 interface Rule {
   id: string;
@@ -21,11 +34,28 @@ interface Rule {
   unitCall: number;
   ratioPercent: number;
   fixedDig: number;
+  /** 粗利率(%)。粗利ベースの種別で使う */
+  marginRatePct: number;
+  /** 初回営業への分配率(%)。残りが CG の取り分 */
+  salesSharePct: number;
   active: boolean;
 }
 interface Share {
   personId: string;
   sharePercent: number;
+}
+/** 制度サマリに必要な範囲の組織情報。 */
+interface OrgUnitLite {
+  name: string;
+  level: string;
+  effectiveIncentiveRatePct: number;
+  effectiveSetting: {
+    budgetCoefficient: number;
+    insuranceCoefficient: number;
+    commonCostFulltime: number;
+    commonCostParttime: number;
+    promotion: { upTwo: number; upOne: number; downOne: number; downTwo: number };
+  };
 }
 interface ContractRow {
   contractId: string;
@@ -50,6 +80,8 @@ const emptyRule: Rule = {
   unitCall: 50000,
   ratioPercent: 0,
   fixedDig: 0,
+  marginRatePct: 50,
+  salesSharePct: 0,
   active: true,
 };
 
@@ -62,17 +94,21 @@ export function RulesAndContracts() {
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   // 事業部フィルタ（空 = 全事業部）。ルール一覧・契約一覧の両方に効かせる。
   const [divisionFilter, setDivisionFilter] = useState("");
+  // 制度サマリ用。事業部（OrgUnit の 事業部 階層）の実効設定を名前で引く。
+  const [orgUnits, setOrgUnits] = useState<OrgUnitLite[]>([]);
 
   async function load() {
     try {
-      const [r, c, m] = await Promise.all([
+      const [r, c, m, o] = await Promise.all([
         apiGet<Rule[]>("/api/calc-rules"),
         apiGet<ContractRow[]>(`/api/contracts?ym=${YM}`),
         apiGet<{ personId: string; name: string }[]>("/api/members"),
+        apiGet<OrgUnitLite[]>("/api/org-units").catch(() => [] as OrgUnitLite[]),
       ]);
       setRules(r);
       setContracts(c);
       setMembers(m);
+      setOrgUnits(o);
       setSource("db");
     } catch {
       setSource("mock");
@@ -177,6 +213,19 @@ export function RulesAndContracts() {
   ).sort();
   const matchesDivision = (d: string) => !divisionFilter || d === divisionFilter;
   const visibleRules = rules.filter((r) => matchesDivision(r.division));
+
+  // 制度サマリ。事業部を絞っていればその1件、絞っていなければ全事業部ぶん出す。
+  const schemes: DivisionScheme[] = divisions
+    .filter(matchesDivision)
+    .map((d) => {
+      const unit = orgUnits.find((u) => u.level === "事業部" && u.name === d);
+      return {
+        division: d,
+        setting: unit?.effectiveSetting ?? null,
+        incentiveRatePct: unit?.effectiveIncentiveRatePct ?? null,
+        rules: rules.filter((r) => r.division === d),
+      };
+    });
   const visibleContracts = contracts.filter((c) => matchesDivision(c.division));
 
   return (
@@ -207,6 +256,10 @@ export function RulesAndContracts() {
           ))}
         </select>
       </div>
+      {schemes.map((sc) => (
+        <DivisionSchemeCard key={sc.division} scheme={sc} />
+      ))}
+
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">
           DB未接続のためモック表示です（`pnpm db:seed` と DATABASE_URL 設定が必要）。
@@ -244,6 +297,10 @@ export function RulesAndContracts() {
                   {r.ruleType === "固定Dig" && `${yen(r.fixedDig)}Dig`}
                   {r.ruleType === "初回発注1to1" && "1円=1Dig"}
                   {r.ruleType === "バーター契約" && `同額${yen(r.fixedDig)} / 差額の50%`}
+                  {MARGIN_TYPES.includes(r.ruleType) &&
+                    (r.ruleType === "チャーン損失"
+                      ? `粗利率${r.marginRatePct}% × 残月数（マイナス計上）`
+                      : `粗利率${r.marginRatePct}% / CG ${100 - r.salesSharePct}：営業 ${r.salesSharePct}`)}
                 </td>
                 <td className="px-3 py-2 text-center">
                   <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${r.active ? "bg-emerald-100 text-semantic-success" : "bg-slate-100 text-ink-muted"}`}>
@@ -273,6 +330,8 @@ export function RulesAndContracts() {
           <Field label="コール単価"><input type="number" className="inp" value={form.unitCall} onChange={(e) => setForm({ ...form, unitCall: Number(e.target.value) })} /></Field>
           <Field label="月額割合(%)"><input type="number" className="inp" value={form.ratioPercent} onChange={(e) => setForm({ ...form, ratioPercent: Number(e.target.value) })} /></Field>
           <Field label="固定Dig"><input type="number" className="inp" value={form.fixedDig} onChange={(e) => setForm({ ...form, fixedDig: Number(e.target.value) })} /></Field>
+          <Field label="粗利率(%)"><input type="number" className="inp" value={form.marginRatePct} onChange={(e) => setForm({ ...form, marginRatePct: Number(e.target.value) })} /></Field>
+          <Field label="営業への分配率(%)"><input type="number" className="inp" value={form.salesSharePct} onChange={(e) => setForm({ ...form, salesSharePct: Number(e.target.value) })} /></Field>
           <Field label="有効">
             <select className="inp" value={form.active ? "1" : "0"} onChange={(e) => setForm({ ...form, active: e.target.value === "1" })}>
               <option value="1">ON</option><option value="0">OFF</option>

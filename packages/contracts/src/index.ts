@@ -368,6 +368,11 @@ export type PromotionStep = 2 | 1 | 0 | -1 | -2;
  * - 月額基本料金割合: base_amount × ratioPercent%
  * - 固定Dig: 契約1件あたり fixedDig
  * - バーター契約: 相互発注。同額なら fixedDig、当方の発注が少ない分だけ差額の半額
+ *
+ * カスタマーグロース向け（新たに生まれた粗利を原資にする）:
+ * - アップセル粗利: 増分月額 × marginRatePct% × 残契約月数 を CG と初回営業で分ける
+ * - 更新粗利: 月額 × marginRatePct% × 更新月数 を CG と初回営業で分ける
+ * - チャーン損失: 月額 × marginRatePct% × 残契約月数 をマイナス計上（更新月の満了は対象外）
  */
 export const CalcRuleType = z.enum([
   "回線コール単価",
@@ -375,8 +380,18 @@ export const CalcRuleType = z.enum([
   "月額基本料金割合",
   "固定Dig",
   "バーター契約",
+  "アップセル粗利",
+  "更新粗利",
+  "チャーン損失",
 ]);
 export type CalcRuleType = z.infer<typeof CalcRuleType>;
+
+/** 粗利を原資にする種別（粗利率・分配率を使う）。 */
+export const MARGIN_BASED_RULE_TYPES: readonly CalcRuleType[] = [
+  "アップセル粗利",
+  "更新粗利",
+  "チャーン損失",
+];
 
 export const CalcRuleSchema = z.object({
   id: z.string().min(1).max(32),
@@ -389,6 +404,10 @@ export const CalcRuleSchema = z.object({
   unitCall: z.number().min(0).default(0), // コール単価(Dig)
   ratioPercent: z.number().min(0).max(1000).default(0), // 月額割合(%)
   fixedDig: z.number().min(0).default(0), // 固定Dig
+  /** 粗利率(%)。アップセル粗利／更新粗利／チャーン損失で使う（既定50%） */
+  marginRatePct: z.number().min(0).max(100).default(50),
+  /** 初回担当営業への分配率(%)。残りが CG の取り分になる */
+  salesSharePct: z.number().min(0).max(100).default(0),
   active: z.boolean().default(true),
 });
 export type CalcRule = z.infer<typeof CalcRuleSchema>;
