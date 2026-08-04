@@ -147,6 +147,7 @@ enum CalcRuleType {
   初回発注1to1
   月額基本料金割合
   固定Dig
+  バーター契約
 }
 
 enum Role {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTING } from "@dig/contracts";
 import {
+  barterDig,
   achievementRate,
   aggregateSeikaDig,
   blendedIncentive,
@@ -420,5 +421,37 @@ describe("昇降級判定", () => {
     [0.5, -2],
   ])("rate %s → %s段", (rate, step) => {
     expect(promotionStep(rate as number, S)).toBe(step);
+  });
+});
+
+describe("barterDig（バーター契約）", () => {
+  it("同額発注なら固定20万Dig", () => {
+    expect(barterDig(500_000, 500_000)).toBe(200_000);
+  });
+
+  it("当方の発注額のほうが大きい（持ち出し）なら付与なし", () => {
+    expect(barterDig(800_000, 500_000)).toBe(0);
+  });
+
+  it("当方の発注額のほうが小さければ差額の半額", () => {
+    // 差額 300,000 → 千円切捨 300,000 → 半額 150,000
+    expect(barterDig(500_000, 800_000)).toBe(150_000);
+  });
+
+  it("差額は千円単位で切り捨ててから半額にする", () => {
+    // 差額 301,999 → 千円切捨 301,000 → 半額 150,500
+    expect(barterDig(500_000, 801_999)).toBe(150_500);
+  });
+
+  it("双方0円なら付与なし", () => {
+    expect(barterDig(0, 0)).toBe(0);
+  });
+
+  it("当方0円・先方発注ありなら差額の半額", () => {
+    expect(barterDig(0, 1_000_000)).toBe(500_000);
+  });
+
+  it("固定Digは運用値を差し替えられる", () => {
+    expect(barterDig(100_000, 100_000, 300_000)).toBe(300_000);
   });
 });

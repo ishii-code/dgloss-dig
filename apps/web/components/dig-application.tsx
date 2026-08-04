@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
+import { barterDig } from "@dig/core";
 import { man, yen } from "@/lib/format";
 import { SectionHeader } from "./ui";
 
@@ -89,6 +90,8 @@ export function DigApplicationPanel({
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  // バーター契約（相互発注）の入力。獲得ポイントを自動計算する。
+  const [barter, setBarter] = useState({ enabled: false, ourOrder: "", theirOrder: "" });
 
   const load = useCallback(async () => {
     try {
@@ -190,6 +193,7 @@ export function DigApplicationPanel({
         note: form.note.trim() || null,
       });
       setForm({ ...EMPTY_FORM });
+      setBarter({ enabled: false, ourOrder: "", theirOrder: "" });
       setHits(null);
       setMsg("Dig申請を登録しました。承認されると契約日の月の成果Digに反映されます。");
       await load();
@@ -350,13 +354,14 @@ export function DigApplicationPanel({
                     className="w-full rounded-card border border-surface-border px-3 py-1.5 text-sm"
                   />
                 </Field>
-                <Field label="獲得ポイント（D）">
+                <Field label="獲得ポイント（D）" hint={barter.enabled ? "バーターから自動計算" : undefined}>
                   <input
                     value={form.grantedDig}
                     onChange={(e) => set("grantedDig", e.target.value.replace(/[^\d.]/g, ""))}
                     inputMode="numeric"
                     placeholder="750000"
-                    className="tabular w-full rounded-card border border-surface-border px-3 py-1.5 text-right text-sm"
+                    readOnly={barter.enabled}
+                    className={`tabular w-full rounded-card border border-surface-border px-3 py-1.5 text-right text-sm ${barter.enabled ? "bg-surface-panel text-ink-muted" : ""}`}
                   />
                 </Field>
                 <Field label="契約日">
@@ -393,6 +398,61 @@ export function DigApplicationPanel({
                       ))}
                   </select>
                 </Field>
+                <div className="sm:col-span-2 rounded-card border border-surface-border bg-surface-panel p-3">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-ink">
+                    <input
+                      type="checkbox"
+                      checked={barter.enabled}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        setBarter({ ...barter, enabled });
+                        if (!enabled) set("grantedDig", "");
+                      }}
+                    />
+                    バーター契約（相互発注）として計算する
+                  </label>
+                  {barter.enabled && (
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <Field label="当方の発注額（支出）">
+                        <input
+                          value={barter.ourOrder}
+                          onChange={(e) => {
+                            const ourOrder = e.target.value.replace(/[^\d]/g, "");
+                            setBarter({ ...barter, ourOrder });
+                            set("grantedDig", String(barterDig(Number(ourOrder || 0), Number(barter.theirOrder || 0))));
+                          }}
+                          inputMode="numeric"
+                          className="tabular w-full rounded-card border border-surface-border px-3 py-1.5 text-right text-sm"
+                        />
+                      </Field>
+                      <Field label="先方からの発注額（売上）">
+                        <input
+                          value={barter.theirOrder}
+                          onChange={(e) => {
+                            const theirOrder = e.target.value.replace(/[^\d]/g, "");
+                            setBarter({ ...barter, theirOrder });
+                            set("grantedDig", String(barterDig(Number(barter.ourOrder || 0), Number(theirOrder || 0))));
+                          }}
+                          inputMode="numeric"
+                          className="tabular w-full rounded-card border border-surface-border px-3 py-1.5 text-right text-sm"
+                        />
+                      </Field>
+                      <div className="text-xs text-ink-muted">
+                        <div className="mb-1 font-semibold text-ink">獲得Dig</div>
+                        <div className="tabular text-lg font-bold text-brand-accent">
+                          {yen(barterDig(Number(barter.ourOrder || 0), Number(barter.theirOrder || 0)))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {barter.enabled && (
+                    <div className="mt-2 text-[11px] text-ink-faint">
+                      同額なら固定20万Dig。当方の発注額のほうが大きい（持ち出し）場合は付与なし。
+                      当方のほうが小さい場合は差額（千円切捨）の半額。
+                    </div>
+                  )}
+                </div>
+
                 <div className="sm:col-span-2">
                   <Field label="備考">
                     <textarea

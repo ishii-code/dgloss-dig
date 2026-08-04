@@ -7,7 +7,7 @@ import { SectionHeader } from "./ui";
 
 const ACTOR = "B0000071";
 const YM = "2026-01";
-const RULE_TYPES = ["回線コール単価", "初回発注1to1", "月額基本料金割合", "固定Dig"] as const;
+const RULE_TYPES = ["回線コール単価", "初回発注1to1", "月額基本料金割合", "固定Dig", "バーター契約"] as const;
 
 interface Rule {
   id: string;
@@ -210,6 +210,7 @@ export function RulesAndContracts() {
                   {r.ruleType === "月額基本料金割合" && `${r.ratioPercent}%`}
                   {r.ruleType === "固定Dig" && `${yen(r.fixedDig)}Dig`}
                   {r.ruleType === "初回発注1to1" && "1円=1Dig"}
+                  {r.ruleType === "バーター契約" && `同額${yen(r.fixedDig)} / 差額の50%`}
                 </td>
                 <td className="px-3 py-2 text-center">
                   <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${r.active ? "bg-emerald-100 text-semantic-success" : "bg-slate-100 text-ink-muted"}`}>

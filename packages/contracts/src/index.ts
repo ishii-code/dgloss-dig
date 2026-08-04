@@ -361,12 +361,14 @@ export type PromotionStep = 2 | 1 | 0 | -1 | -2;
  * - 初回発注1to1: 初期発注額(initial_fee)を 1円=1Dig（千円切捨）
  * - 月額基本料金割合: base_amount × ratioPercent%
  * - 固定Dig: 契約1件あたり fixedDig
+ * - バーター契約: 相互発注。同額なら fixedDig、当方の発注が少ない分だけ差額の半額
  */
 export const CalcRuleType = z.enum([
   "回線コール単価",
   "初回発注1to1",
   "月額基本料金割合",
   "固定Dig",
+  "バーター契約",
 ]);
 export type CalcRuleType = z.infer<typeof CalcRuleType>;
 
