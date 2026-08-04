@@ -1,3 +1,10 @@
+# [1.31.0](https://github.com/ishii-code/dgloss-dig/compare/v1.30.0...v1.31.0) (2026-08-04)
+
+
+### Features
+
+* **eval:** 配下の合算方法を選択可能にし、アルバイトの予算を実労働時間で算定 ([#78](https://github.com/ishii-code/dgloss-dig/issues/78)) ([d755c0a](https://github.com/ishii-code/dgloss-dig/commit/d755c0ac5670c8ddfe3bbd1caa531f2cc71372e3))
+
 # [1.30.0](https://github.com/ishii-code/dgloss-dig/compare/v1.29.2...v1.30.0) (2026-08-04)
 
 
