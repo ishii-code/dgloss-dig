@@ -102,6 +102,8 @@ export function AccountsAdmin() {
   const [allOrgUnits, setAllOrgUnits] = useState<OrgOption[]>([]);
   /** "" = 評価対象事業部 / "all" = 全アカウント / それ以外 = 組織ID */
   const [orgFilter, setOrgFilter] = useState("");
+  /** パスワードの発行状況で絞り込む。"" = すべて */
+  const [pwFilter, setPwFilter] = useState<"" | "none" | "temp" | "set">("");
 
   // 一括発行で選べるのは事業部とグループ（チームは出さない）。
   const orgOptions = allOrgUnits.filter((o) => o.level === "事業部" || o.level === "グループ");
@@ -134,17 +136,35 @@ export function AccountsAdmin() {
           .join("・") || "未設定"
       : targetDivisions.join("・") || "未設定";
 
+  /** アカウントのパスワード状態。 */
+  const pwStateOf = (a: Account): "none" | "temp" | "set" =>
+    !a.hasPassword ? "none" : a.mustChangePassword ? "temp" : "set";
+
   // 画面に表示するアカウント。組織を選べばその組織＋配下、既定はDig評価の対象。
-  const visible = selectedOrg
+  const inScope = selectedOrg
     ? (() => {
         const ids = descendantsOf(selectedOrg.id);
         return accounts.filter((a) => a.orgUnitId != null && ids.has(a.orgUnitId));
       })()
-    : orgFilter === "all"
-      ? accounts
-      : allOrgUnits.length > 0
-        ? accounts.filter((a) => a.orgUnitId != null && targetOrgIds.has(a.orgUnitId))
-        : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
+    : orgFilter === "none"
+      ? accounts.filter((a) => a.orgUnitId == null)
+      : orgFilter === "all"
+        ? accounts
+        : allOrgUnits.length > 0
+          ? accounts.filter((a) => a.orgUnitId != null && targetOrgIds.has(a.orgUnitId))
+          : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
+
+  // 組織が紐付いていないアカウント（従業員マスタ未紐付け、または組織未設定）。
+  // 組織で絞るとどこにも出てこなくなるため、専用の選択肢を用意して見えるようにする。
+  const noOrgAccounts = accounts.filter((a) => a.orgUnitId == null);
+
+  // パスワードの発行状況での絞り込み。件数はこの組織の中での内訳を出す。
+  const pwCount = {
+    none: inScope.filter((a) => pwStateOf(a) === "none").length,
+    temp: inScope.filter((a) => pwStateOf(a) === "temp").length,
+    set: inScope.filter((a) => pwStateOf(a) === "set").length,
+  };
+  const visible = pwFilter ? inScope.filter((a) => pwStateOf(a) === pwFilter) : inScope;
 
   async function load() {
     try {
@@ -386,12 +406,43 @@ export function AccountsAdmin() {
                 {o.path}（{o.level}・{o.totalMembers}名）
               </option>
             ))}
-            <option value="all">全アカウント</option>
+            {noOrgAccounts.length > 0 && (
+              <option value="none">組織未設定（{noOrgAccounts.length}名）</option>
+            )}
+            <option value="all">全アカウント（{accounts.length}名）</option>
+          </select>
+          {/* 発行状況での絞り込み。誰にまだ発行していないかをすぐ出せるようにする。 */}
+          <select
+            value={pwFilter}
+            onChange={(e) => setPwFilter(e.target.value as typeof pwFilter)}
+            title="パスワードの発行状況で絞り込む"
+            className="rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
+          >
+            <option value="">パスワード状態: すべて</option>
+            <option value="none">未発行（{pwCount.none}名）</option>
+            <option value="temp">仮パスワード（{pwCount.temp}名）</option>
+            <option value="set">設定済み（{pwCount.set}名）</option>
           </select>
           <span className="text-xs text-ink-muted">
             表示中 {visible.length}名 / 全{accounts.length}名
           </span>
         </div>
+
+        {noOrgAccounts.length > 0 && orgFilter !== "none" && orgFilter !== "all" && (
+          <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">
+            組織が紐付いていないアカウントが <b>{noOrgAccounts.length}名</b> います
+            （{noOrgAccounts.slice(0, 5).map((a) => a.name).join("・")}
+            {noOrgAccounts.length > 5 ? " ほか" : ""}）。
+            事業部を選んだ状態では一覧に出ないため、
+            <button
+              onClick={() => setOrgFilter("none")}
+              className="mx-1 underline decoration-dotted underline-offset-2"
+            >
+              「組織未設定」で表示
+            </button>
+            して、従業員IDの紐付けか全従業員一覧での組織設定を行ってください。
+          </div>
+        )}
 
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <button
@@ -422,6 +473,7 @@ export function AccountsAdmin() {
         )}
 
         <div className="text-xs text-ink-muted">
+          パスワード状態を「未発行」に絞れば、<b>まだ発行していない人だけ</b>に発行できます。
           仮パスワードは<b>上で表示中のアカウント</b>にだけ発行します（25名ずつ分割して実行するため、
           人数が多くてもタイムアウトしません）。チェックを入れない限り、既にパスワードがある人は据え置きます。
           発行した平文は<b>この画面でしか見られません</b>。必ずコピーかCSVで控えてください。
@@ -609,7 +661,9 @@ export function AccountsAdmin() {
             {visible.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-3 text-ink-muted">
-                  表示できるアカウントがありません（評価対象事業部の設定、または従業員IDの紐付けをご確認ください）
+                  {pwFilter
+                    ? "この条件に一致するアカウントはありません（パスワード状態の絞り込みを外してください）"
+                    : "表示できるアカウントがありません（組織設定の「Dig評価の対象」、または従業員IDの紐付けをご確認ください）"}
                 </td>
               </tr>
             )}
