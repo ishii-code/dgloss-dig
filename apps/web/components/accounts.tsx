@@ -86,6 +86,11 @@ export function AccountsAdmin() {
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProvisionResult | null>(null);
+  /**
+   * 発行した仮パスワードの積み上げ。事業部ごとに何度か発行しても消えないよう、
+   * 画面を離れるまでここに貯める（同じ人を再発行したら新しい方で置き換える）。
+   */
+  const [issued, setIssued] = useState<Credential[]>([]);
   // サインインしたが従業員マスタと自動突合できなかったアカウント（管理者が紐付ける）。
   const [unlinked, setUnlinked] = useState<Unlinked[]>([]);
   const [pickerMembers, setPickerMembers] = useState<PickerMember[]>([]);
@@ -195,6 +200,16 @@ export function AccountsAdmin() {
     void load();
   }, []);
 
+  /** 発行済み一覧に積み増す。同じメールが既にあれば新しい方で置き換える。 */
+  const addIssued = (rows: Credential[]) => {
+    if (rows.length === 0) return;
+    setIssued((prev) => {
+      const byEmail = new Map(prev.map((c) => [c.email, c]));
+      for (const r of rows) byEmail.set(r.email, r);
+      return [...byEmail.values()];
+    });
+  };
+
   /**
    * 選んだ組織（事業部またはグループ）とその配下の在籍メンバーへ、
    * ユーザー権限のアカウントを一括発行する（既存アカウントの権限は変更しない）。
@@ -268,16 +283,7 @@ export function AccountsAdmin() {
         );
         skipped += r.skipped;
       }
-      setResult({
-        scope: "displayed",
-        divisions: null,
-        targets: ids.length,
-        created: 0,
-        updated: credentials.length,
-        skipped: [],
-        placeholders: [],
-        credentials,
-      });
+      addIssued(credentials);
       setMsg(
         `仮パスワードを発行しました: ${credentials.length}件` +
           (skipped > 0 ? ` / 既にパスワードがあるため据え置き ${skipped}件` : "") +
@@ -289,12 +295,7 @@ export function AccountsAdmin() {
         `発行に失敗しました: ${(e as Error).message}\n` +
           `※ ここまでに発行済みの ${credentials.length} 件は有効です。下の一覧を控えてから再実行してください。`,
       );
-      if (credentials.length > 0) {
-        setResult({
-          scope: "displayed", divisions: null, targets: ids.length, created: 0,
-          updated: credentials.length, skipped: [], placeholders: [], credentials,
-        });
-      }
+      addIssued(credentials);
     } finally {
       setBusy(false);
     }
@@ -310,16 +311,7 @@ export function AccountsAdmin() {
         "POST",
         { actor: ACTOR },
       );
-      setResult({
-        scope: "single",
-        divisions: null,
-        targets: 1,
-        created: 0,
-        updated: 1,
-        skipped: [],
-        placeholders: [],
-        credentials: [{ personId: "", name: r.name, email: r.email, temporaryPassword: r.temporaryPassword }],
-      });
+      addIssued([{ personId: "", name: r.name, email: r.email, temporaryPassword: r.temporaryPassword }]);
       setMsg(`${r.name} の仮パスワードを再発行しました。下の一覧から控えて本人へ渡してください。`);
       await load();
     } catch (e) {
@@ -471,27 +463,37 @@ export function AccountsAdmin() {
           </div>
         </details>
 
-        {result && result.credentials.length > 0 && (
+        {issued.length > 0 && (
           <div className="mt-4 rounded-card border border-brand-primary bg-blue-50 p-3">
             <div className="mb-1 text-sm font-semibold text-brand-primary">
-              発行した仮パスワード {result.credentials.length}件
+              発行した仮パスワード {issued.length}件（この画面で発行した分の累計）
             </div>
             <div className="mb-2 text-xs text-ink-muted">
               パスワードはハッシュ化して保存されるため、<b>この画面を閉じると二度と表示できません</b>。
               コピーまたはCSVで控えて各自へ配布してください。本人は初回ログイン後にパスワード変更を求められます。
+              <b>事業部を切り替えて続けて発行しても、ここには消えずに積み上がります。</b>
             </div>
             <div className="mb-2 flex flex-wrap gap-2">
               <button
-                onClick={() => copyCredentials(result.credentials)}
+                onClick={() => copyCredentials(issued)}
                 className="rounded-card bg-brand-primary px-3 py-1 text-xs font-semibold text-white"
               >
-                一覧をコピー
+                一覧をコピー（{issued.length}件）
               </button>
               <button
-                onClick={() => downloadCredentials(result.credentials)}
+                onClick={() => downloadCredentials(issued)}
                 className="rounded-card border border-brand-primary px-3 py-1 text-xs font-semibold text-brand-primary"
               >
-                CSVをダウンロード
+                CSVをダウンロード（{issued.length}件）
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`発行した ${issued.length}件の表示を消します。控えは取りましたか？\n（パスワードは二度と表示できません）`))
+                    setIssued([]);
+                }}
+                className="ml-auto rounded-card border border-surface-border px-3 py-1 text-xs text-ink-muted"
+              >
+                表示をクリア
               </button>
             </div>
             <div className="max-h-64 overflow-y-auto rounded-card bg-white">
@@ -504,7 +506,7 @@ export function AccountsAdmin() {
                   </tr>
                 </thead>
                 <tbody className="tabular">
-                  {result.credentials.map((c) => (
+                  {issued.map((c) => (
                     <tr key={c.email} className="border-b border-surface-border last:border-0">
                       <td className="px-2 py-1.5">{c.name}</td>
                       <td className="px-2 py-1.5 text-ink-muted">{c.email}</td>
@@ -682,6 +684,7 @@ export function AccountsAdmin() {
   );
 }
 
+/** 発行した仮パスワード1件（平文はこの画面にしか存在しない）。 */
 type Credential = { personId: string; name: string; email: string; temporaryPassword: string };
 
 /** 仮パスワード一覧をタブ区切りでクリップボードへ（チャット等へ貼りやすい形）。 */
