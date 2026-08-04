@@ -1,3 +1,10 @@
+# [1.35.0](https://github.com/ishii-code/dgloss-dig/compare/v1.34.0...v1.35.0) (2026-08-04)
+
+
+### Features
+
+* **rules:** CGの獲得ルール種別を追加し、事業部ごとの制度サマリを表示 ([#84](https://github.com/ishii-code/dgloss-dig/issues/84)) ([0c11619](https://github.com/ishii-code/dgloss-dig/commit/0c11619e391d653739af1c7fdca86462d21f85a1))
+
 # [1.34.0](https://github.com/ishii-code/dgloss-dig/compare/v1.33.0...v1.34.0) (2026-08-04)
 
 
