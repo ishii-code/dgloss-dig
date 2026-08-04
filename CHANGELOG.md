@@ -1,3 +1,10 @@
+## [1.29.2](https://github.com/ishii-code/dgloss-dig/compare/v1.29.1...v1.29.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **accounts:** 仮メールのアカウントを会社メールへ自動で差し替える ([#76](https://github.com/ishii-code/dgloss-dig/issues/76)) ([366fd8b](https://github.com/ishii-code/dgloss-dig/commit/366fd8b4dcd7389bab2c5f31d8a22ffe740d24d0))
+
 ## [1.29.1](https://github.com/ishii-code/dgloss-dig/compare/v1.29.0...v1.29.1) (2026-07-30)
 
 
