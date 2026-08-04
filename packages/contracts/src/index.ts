@@ -348,6 +348,12 @@ export interface QuarterBalanceResult {
 /** インセンティブ率（超過分の20%） */
 export const INCENTIVE_RATE = 0.2;
 
+/**
+ * カスタマーグロースのインセンティブ率（達成から上振れた分の5%還元）。
+ * 組織ごとに OrgUnit.incentiveRatePct で上書きできる。
+ */
+export const CG_INCENTIVE_RATE = 0.05;
+
 /** 昇降級判定結果（+2/+1/0/-1/-2 段） */
 export type PromotionStep = 2 | 1 | 0 | -1 | -2;
 

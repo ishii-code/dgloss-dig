@@ -16,6 +16,10 @@ export interface OrgUnit {
   leaderName: string | null;
   isTarget: boolean;
   active: boolean;
+  /** この組織に設定した還元率(%)。未設定は null */
+  incentiveRatePct: number | null;
+  /** 実際に適用される還元率(%)（未設定なら祖先→既定20） */
+  effectiveIncentiveRatePct: number;
   /** 「事業部 > グループ > チーム」の表示用パス */
   path: string;
   division: string | null;
@@ -202,13 +206,14 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
               <th className="px-3 py-2 text-right font-semibold">所属（配下含む）</th>
               <th className="px-3 py-2 font-semibold">長（予算を合算）</th>
               <th className="px-3 py-2 text-center font-semibold">Dig評価の対象</th>
+              <th className="px-3 py-2 text-center font-semibold">インセン還元率</th>
               <th className="px-3 py-2 text-center font-semibold">操作</th>
             </tr>
           </thead>
           <tbody className="tabular">
             {ordered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-3 text-ink-muted">
+                <td colSpan={7} className="px-3 py-3 text-ink-muted">
                   組織が未登録です。まず事業部を追加してください。
                 </td>
               </tr>
@@ -247,6 +252,24 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
                     )}
                   </td>
                   <td className="px-3 py-2 text-center">
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      defaultValue={u.incentiveRatePct ?? ""}
+                      placeholder={String(u.effectiveIncentiveRatePct)}
+                      disabled={busy}
+                      title="未入力なら上位組織の設定、無ければ既定20%が適用されます"
+                      onBlur={(e) => {
+                        const raw = e.target.value.trim();
+                        const next = raw === "" ? null : Number(raw);
+                        if (next !== (u.incentiveRatePct ?? null)) void patch(u, { incentiveRatePct: next });
+                      }}
+                      className="tabular w-16 rounded-card border border-surface-border px-2 py-1 text-right text-xs"
+                    />
+                    <span className="ml-1 text-[10px] text-ink-faint">%</span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
                     <button
                       onClick={() => void remove(u)}
                       disabled={busy}
@@ -264,6 +287,8 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
           ※「Dig評価の対象」に指定した組織とその配下のメンバーが評価台帳の対象になります（どの階層でも指定できます）。
           「長」を設定すると、その組織の配下メンバーの予算Dig・実績Digが長に合算されます。
           組織名を変更すると、配下メンバーの事業部表記も自動で追随します。
+          「インセン還元率」は未入力なら上位組織の設定を引き継ぎ、どこにも無ければ既定20%です
+          （カスタマーグロースは5%を設定してください）。
         </div>
       </div>
     </>

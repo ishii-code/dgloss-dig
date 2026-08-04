@@ -272,9 +272,12 @@ export function quarterBalance(
   return Math.max(gross - target, 0) + bonus;
 }
 
-/** インセンティブ = 残高 × 20% */
-export function incentiveAmount(balance: number): number {
-  return balance * INCENTIVE_RATE;
+/**
+ * インセンティブ = 残高 × 還元率。
+ * 既定は 20%（営業）。カスタマーグロースなど組織ごとに率が異なる場合は rate を渡す。
+ */
+export function incentiveAmount(balance: number, rate = INCENTIVE_RATE): number {
+  return balance * rate;
 }
 
 /** 四半期/半期の残高・インセンティブ・ランクを集約（要件 F-8） */
@@ -283,6 +286,8 @@ export function computeQuarterBalance(args: {
   gross: number;
   target: number;
   bonus: number;
+  /** インセンティブの還元率（既定 20%。カスタマーグロースは 5%） */
+  incentiveRate?: number;
 }): QuarterBalanceResult {
   const rate = achievementRate(args.gross, args.target);
   const balance = quarterBalance(args.gross, args.target, args.bonus);
@@ -292,7 +297,7 @@ export function computeQuarterBalance(args: {
     gross: args.gross,
     achievementRate: rate,
     balance,
-    incentive: incentiveAmount(balance),
+    incentive: incentiveAmount(balance, args.incentiveRate ?? INCENTIVE_RATE),
     rank: evaluationRank(rate),
   };
 }
@@ -480,16 +485,17 @@ export type SurplusChoice = "incentive" | "carryover";
 
 /**
  * 超過分（surplus = max(成果−目標,0)）の配分（Q3）。
- * incentive: 超過分 × 20% を現金インセンに。
+ * incentive: 超過分 × 還元率（既定20%・カスタマーグロースは5%）を現金インセンに。
  * carryover: 超過分を翌期へ持ち越し（インセンは出さない）。
  */
 export function surplusAllocation(
   surplus: number,
   choice: SurplusChoice,
+  rate = INCENTIVE_RATE,
 ): { incentive: number; carryover: number } {
   const s = Math.max(0, surplus);
   if (choice === "carryover") return { incentive: 0, carryover: s };
-  return { incentive: s * INCENTIVE_RATE, carryover: 0 };
+  return { incentive: s * rate, carryover: 0 };
 }
 
 /** マイナス着地（成果<0）＝減給査定（Q3）。減給段数を返す（既存降級ロジックに準拠）。 */
@@ -551,4 +557,74 @@ export function salaryGradeMove(
   const newIdx = Math.min(Math.max(idx - step, 0), order.length - 1);
   const row = order[newIdx]!;
   return { row, amount: table[row]! };
+}
+
+// ── カスタマーグロース（更新・アップセル・チャーン）の獲得Dig ──
+/** 粗利率の既定値（運用確定値: 50%）。 */
+export const CG_MARGIN_RATE = 0.5;
+
+/** 分配率の既定値（CG:営業）。アップセルは 70:30、更新は 80:20。 */
+export const CG_SPLIT_UPSELL_SALES_PCT = 30;
+export const CG_SPLIT_RENEWAL_SALES_PCT = 20;
+
+/**
+ * 新たに生まれた粗利から獲得Digを出す（Dig転換率100%＝粗利1円=1Dig・千円切捨）。
+ * @param monthlyAmount 対象の月額（アップセルなら増分、更新なら契約月額）
+ * @param months 対象期間の月数（アップセルなら残契約月数、更新なら更新期間）
+ * @param marginRate 粗利率（既定 0.5）
+ */
+export function cgGrossDig(monthlyAmount: number, months: number, marginRate = CG_MARGIN_RATE): number {
+  if (monthlyAmount <= 0 || months <= 0) return 0;
+  return floorThousand(Math.round(monthlyAmount * marginRate * months));
+}
+
+/** アップセルの獲得Dig（増分月額 × 粗利率 × 残契約月数）。 */
+export function cgUpsellDig(
+  addedMonthlyAmount: number,
+  remainingMonths: number,
+  marginRate = CG_MARGIN_RATE,
+): number {
+  return cgGrossDig(addedMonthlyAmount, remainingMonths, marginRate);
+}
+
+/** 更新の獲得Dig（月額 × 粗利率 × 更新期間）。 */
+export function cgRenewalDig(
+  monthlyAmount: number,
+  renewalMonths: number,
+  marginRate = CG_MARGIN_RATE,
+): number {
+  return cgGrossDig(monthlyAmount, renewalMonths, marginRate);
+}
+
+/**
+ * チャーン（解約）のDig。
+ * - **更新月での解約（契約期間の満了）はマイナスなし**（0）
+ * - **途中解約は残存期間の粗利をマイナス計上**
+ *
+ * @param monthlyAmount 契約月額
+ * @param remainingMonths 解約時点の残契約月数（満了なら0）
+ * @param atRenewal 更新月での解約（契約満了に伴う終了）か
+ */
+export function cgChurnDig(
+  monthlyAmount: number,
+  remainingMonths: number,
+  atRenewal: boolean,
+  marginRate = CG_MARGIN_RATE,
+): number {
+  if (atRenewal) return 0; // 満了に伴う終了はマイナスにしない
+  const gross = cgGrossDig(monthlyAmount, remainingMonths, marginRate);
+  return gross === 0 ? 0 : -gross; // -0 を返さない
+
+}
+
+/**
+ * 原資を CG と初回担当営業へ分ける。原資は増やさず、同じ額を割る。
+ * @param totalDig 分配前の獲得Dig
+ * @param salesPercent 営業の取り分（%）
+ */
+export function cgSplit(totalDig: number, salesPercent: number): { cg: number; sales: number } {
+  if (totalDig <= 0) return { cg: 0, sales: 0 };
+  const pct = Math.min(100, Math.max(0, salesPercent));
+  const sales = Math.floor((totalDig * pct) / 100);
+  return { cg: totalDig - sales, sales };
 }
