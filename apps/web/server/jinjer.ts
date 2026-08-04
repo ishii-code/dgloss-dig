@@ -26,7 +26,8 @@ export interface NormalizedEmployee {
   personId: string; // 社員番号（jinjer では top-level id）
   name: string;
   division: string; // 事業部/部署（/v1/employees/affiliations の主務 department 名）
-  position: string | null; // 役職（jinjer に無ければ null。既存の手入力を上書きしないため）
+  position: string | null; // 役職（既知の4値に一致したときのみ。無ければ null）
+  positionRaw: string; // jinjer 上の役職名の生値（紐付けの原本・空なら取得できていない）
   employmentType: "正社員" | "アルバイト";
   employmentClassification: string; // jinjer の雇用区分（役員/正社員/アルバイト等）
   joinedOn: string; // YYYY-MM-DD
@@ -293,6 +294,7 @@ function normalize(o: Record<string, unknown>): NormalizedEmployee | null {
     status,
     basePay: 0,
     email,
+    positionRaw: posRaw,
   };
 }
 
@@ -564,6 +566,82 @@ export async function probeMailFields(): Promise<MailProbeResult> {
     usedKeys: MAIL_KEYS,
     fields: [...stats.values()].sort((a, b) => b.filled - a.filled),
     unknownFields: [...unknown],
+  };
+}
+
+export interface PositionProbeResult {
+  connected: boolean;
+  scanned: number;
+  /** 役職らしい値を持っていた人数 */
+  withPosition: number;
+  /** 参照している候補キー */
+  usedKeys: string[];
+  /** 項目別の充足状況（多い順） */
+  fields: Array<{ path: string; filled: number; total: number; samples: string[] }>;
+}
+
+/**
+ * jinjer 従業員APIに役職の項目があるかを実データで確認する診断。
+ * 項目名と実際の値（役職名）を返す。紐付け表を作るための材料。
+ */
+export async function probePositionFields(): Promise<PositionProbeResult> {
+  const keys = ["position_name", "position", "job_title", "title", "yakushoku", "役職"];
+  if (!jinjerConnected) {
+    return { connected: false, scanned: 0, withPosition: 0, usedKeys: keys, fields: [] };
+  }
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const stats = new Map<string, { path: string; filled: number; total: number; samples: Set<string> }>();
+  let scanned = 0;
+  let withPosition = 0;
+
+  for (let page = 1; page <= 3; page++) {
+    const r = await fetchJson(`${JINJER_BASE}/v1/employees?page=${page}`, headers, 2);
+    if (!r.ok || r.json === null) break;
+    const list = extractList(r.json);
+    if (list.length === 0) break;
+    for (const rec of list) {
+      scanned += 1;
+      let hit = false;
+      const scopes: Array<[string, Record<string, unknown>]> = [
+        ["", rec],
+        ["company.", asObj(rec["company"])],
+        ["personal.", asObj(rec["personal"])],
+      ];
+      for (const [prefix, obj] of scopes) {
+        for (const [k, v] of Object.entries(obj)) {
+          if (v === null || v === undefined) continue;
+          // 値が {id,name} のオブジェクトのこともあるため name を拾う。
+          const raw =
+            typeof v === "object" && !Array.isArray(v)
+              ? String((v as Record<string, unknown>)["name"] ?? "").trim()
+              : String(v).trim();
+          if (raw === "") continue;
+          // 項目名が役職らしい、または値が既知の役職名のものだけを対象にする。
+          if (!/position|title|yakushoku|役職|職位|等級|grade/i.test(k) && !VALID_POSITIONS.has(raw)) {
+            continue;
+          }
+          const path = `${prefix}${k}`;
+          const cur = stats.get(path) ?? { path, filled: 0, total: 0, samples: new Set<string>() };
+          cur.total += 1;
+          cur.filled += 1;
+          if (cur.samples.size < 8) cur.samples.add(raw);
+          stats.set(path, cur);
+          hit = true;
+        }
+      }
+      if (hit) withPosition += 1;
+    }
+  }
+
+  return {
+    connected: true,
+    scanned,
+    withPosition,
+    usedKeys: keys,
+    fields: [...stats.values()]
+      .map((f) => ({ path: f.path, filled: f.filled, total: f.total, samples: [...f.samples] }))
+      .sort((a, b) => b.filled - a.filled),
   };
 }
 

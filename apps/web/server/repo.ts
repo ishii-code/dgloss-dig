@@ -1153,13 +1153,17 @@ export async function setTargetDivisions(divisions: string[], actor: string) {
  * 確定済みの行は残す。
  */
 export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: string) {
-  const targets = await listTargetDivisions();
-  if (targets.length === 0) return { deleted: 0 };
-  const inScope = await prisma.member.findMany({
-    where: { status: "在籍", division: { in: targets } },
-    select: { personId: true },
-  });
-  const keep = inScope.map((m) => m.personId);
+  const scopeIds = await targetPersonIds();
+  const targets = scopeIds === null ? await listTargetDivisions() : [];
+  if (scopeIds === null && targets.length === 0) return { deleted: 0 };
+  const keep =
+    scopeIds ??
+    (
+      await prisma.member.findMany({
+        where: { status: "在籍", division: { in: targets } },
+        select: { personId: true },
+      })
+    ).map((m) => m.personId);
   const res = await prisma.monthlyEvaluation.deleteMany({
     where: { yearMonth, finalized: false, personId: { notIn: keep } },
   });
@@ -1203,16 +1207,46 @@ function applyBudgetOverride(
  * 配下の予算/実績を合算し、達成率・ランクを再計算する（Q9: 管理職はグループで評価）。
  */
 async function aggregateGroupEvaluations(yearMonth: string) {
-  const members = await prisma.member.findMany({
-    where: { status: "在籍", groupLeaderId: { not: null } },
-    select: { personId: true, groupLeaderId: true },
-  });
-  if (members.length === 0) return { leaders: 0 };
   const byLeader = new Map<string, string[]>();
-  for (const m of members) {
-    const leader = m.groupLeaderId!;
-    byLeader.set(leader, [...(byLeader.get(leader) ?? []), m.personId]);
+
+  // ① 組織（グループ/チーム）に長が設定されていれば、その配下メンバーを合算対象にする。
+  const [units, allMembers] = await Promise.all([
+    prisma.orgUnit.findMany(),
+    prisma.member.findMany({
+      where: { status: "在籍" },
+      select: { personId: true, orgUnitId: true, groupLeaderId: true },
+    }),
+  ]);
+  if (units.length > 0) {
+    const childrenOf = new Map<number, number[]>();
+    for (const u of units) {
+      if (u.parentId !== null) childrenOf.set(u.parentId, [...(childrenOf.get(u.parentId) ?? []), u.id]);
+    }
+    const subtree = (id: number): number[] => {
+      const out = [id];
+      for (const c of childrenOf.get(id) ?? []) out.push(...subtree(c));
+      return out;
+    };
+    for (const u of units) {
+      if (!u.leaderId) continue;
+      const ids = new Set(subtree(u.id));
+      const subs = allMembers
+        .filter((m) => m.orgUnitId !== null && ids.has(m.orgUnitId) && m.personId !== u.leaderId)
+        .map((m) => m.personId);
+      if (subs.length > 0) {
+        byLeader.set(u.leaderId, [...new Set([...(byLeader.get(u.leaderId) ?? []), ...subs])]);
+      }
+    }
   }
+
+  // ② 従業員ごとの個別指定（従来方式）も引き続き有効。
+  for (const m of allMembers) {
+    if (!m.groupLeaderId) continue;
+    byLeader.set(m.groupLeaderId, [
+      ...new Set([...(byLeader.get(m.groupLeaderId) ?? []), m.personId]),
+    ]);
+  }
+  if (byLeader.size === 0) return { leaders: 0 };
 
   let leaders = 0;
   for (const [leaderId, subIds] of byLeader) {
@@ -1699,7 +1733,8 @@ const INITIAL_LOAN_NOTE = "入社時 必須初回借入（自動承認・予算1
  * 既に「初回」借入があるメンバーはスキップ（冪等）。
  */
 export async function ensureInitialLoans(actor: string) {
-  const targets = await listTargetDivisions();
+  const scopeIds = await targetPersonIds();
+  const targets = scopeIds === null ? await listTargetDivisions() : [];
   const cutoff = new Date(`${INITIAL_LOAN_START_DATE}T00:00:00Z`);
 
   // 運用開始前に入社した既存メンバーは初回借入の対象外。
@@ -1716,7 +1751,11 @@ export async function ensureInitialLoans(actor: string) {
     where: {
       status: "在籍",
       joinedOn: { gte: cutoff },
-      ...(targets.length > 0 ? { division: { in: targets } } : {}),
+      ...(scopeIds !== null
+        ? { personId: { in: scopeIds } }
+        : targets.length > 0
+          ? { division: { in: targets } }
+          : {}),
     },
     select: {
       personId: true,
@@ -1861,10 +1900,19 @@ export async function generateEvaluations(
       o.monthlyBudgetDig.toNumber(),
     ]),
   );
-  // Dig制度の対象事業部に限定（未登録なら全事業部を対象＝従来動作）。
-  const targets = await listTargetDivisions();
+  // 評価対象を絞る。組織が登録されていれば「対象に指定した組織とその配下」、
+  // 未登録なら従来どおり対象事業部（未登録なら全員＝従来動作）。
+  const scopeIds = await targetPersonIds();
+  const targets = scopeIds === null ? await listTargetDivisions() : [];
   const members = await prisma.member.findMany({
-    where: { status: "在籍", ...(targets.length > 0 ? { division: { in: targets } } : {}) },
+    where: {
+      status: "在籍",
+      ...(scopeIds !== null
+        ? { personId: { in: scopeIds } }
+        : targets.length > 0
+          ? { division: { in: targets } }
+          : {}),
+    },
     orderBy: [{ division: "asc" }, { personId: "asc" }],
   });
   // 既存行は「確定済みなら据え置き」「未確定なら現在のマスタで再計算」する。
@@ -2189,8 +2237,12 @@ export async function syncFromJinjer(actor: string) {
           ...(e.email ? { email: e.email } : {}),
           // jinjer 側の所属名は「紐づけの原本」としてのみ保持し、division は後段でルール再適用する。
           ...(e.division ? { jinjerTeam: e.division } : {}),
-          // 役職は jinjer に値がある場合のみ反映（無ければ手入力を維持）。
-          ...(e.position ? { position: e.position as Prisma.MemberUpdateInput["position"] } : {}),
+          // 役職名の生値は紐付けの原本として保持する。
+          ...(e.positionRaw ? { jinjerPosition: e.positionRaw } : {}),
+          // 役職は jinjer に既知の値がある場合のみ反映（手入力した人は上書きしない）。
+          ...(e.position && !existing.positionManual
+            ? { position: e.position as Prisma.MemberUpdateInput["position"] }
+            : {}),
         },
       });
       updated += 1;
@@ -2202,6 +2254,7 @@ export async function syncFromJinjer(actor: string) {
           email: e.email || null,
           division: e.division,
           jinjerTeam: e.division || null,
+          jinjerPosition: e.positionRaw || null,
           position: (e.position ?? "メンバー") as Prisma.MemberCreateInput["position"],
           jobType: null,
           employmentType: e.employmentType as Prisma.MemberCreateInput["employmentType"],
@@ -2410,6 +2463,286 @@ export async function enrichMembersPage(
   return { kind, page, fetched: r.count, updated, done: false };
 }
 
+
+// ─────────────────────────────────────────────
+// 組織（事業部 > グループ > チーム）
+// ─────────────────────────────────────────────
+export const ORG_LEVELS = ["事業部", "グループ", "チーム"] as const;
+export type OrgLevel = (typeof ORG_LEVELS)[number];
+
+interface OrgNode {
+  id: number;
+  name: string;
+  level: string;
+  parentId: number | null;
+  leaderId: string | null;
+  isTarget: boolean;
+  active: boolean;
+}
+
+/** 祖先をたどって事業部の名前を返す（自分が事業部ならその名前）。 */
+function divisionNameOf(id: number | null, byId: Map<number, OrgNode>): string | null {
+  let cur = id === null ? undefined : byId.get(id);
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.level === "事業部") return cur.name;
+    cur = cur.parentId === null ? undefined : byId.get(cur.parentId);
+  }
+  return null;
+}
+
+/** 「事業部 > グループ > チーム」の表示用パス。 */
+function pathOf(id: number, byId: Map<number, OrgNode>): string {
+  const parts: string[] = [];
+  let cur: OrgNode | undefined = byId.get(id);
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    parts.unshift(cur.name);
+    cur = cur.parentId === null ? undefined : byId.get(cur.parentId);
+  }
+  return parts.join(" > ");
+}
+
+/** 自分または祖先が評価対象に指定されているか。 */
+function inTargetScope(id: number | null, byId: Map<number, OrgNode>): boolean {
+  let cur = id === null ? undefined : byId.get(id);
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.isTarget) return true;
+    cur = cur.parentId === null ? undefined : byId.get(cur.parentId);
+  }
+  return false;
+}
+
+/** 組織一覧（階層パス・所属人数・長の氏名つき）。 */
+export async function listOrgUnits() {
+  const [units, members] = await Promise.all([
+    prisma.orgUnit.findMany({ orderBy: [{ level: "asc" }, { name: "asc" }] }),
+    prisma.member.findMany({
+      where: { status: "在籍" },
+      select: { personId: true, name: true, orgUnitId: true },
+    }),
+  ]);
+  const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  const nameOf = new Map(members.map((m) => [m.personId, m.name]));
+  const directCount = new Map<number, number>();
+  for (const m of members) {
+    if (m.orgUnitId !== null) directCount.set(m.orgUnitId, (directCount.get(m.orgUnitId) ?? 0) + 1);
+  }
+  // 配下（子孫）まで含めた人数。
+  const descendants = (id: number): number => {
+    let n = directCount.get(id) ?? 0;
+    for (const u of units) if (u.parentId === id) n += descendants(u.id);
+    return n;
+  };
+  return units.map((u) => ({
+    id: u.id,
+    name: u.name,
+    level: u.level,
+    parentId: u.parentId,
+    leaderId: u.leaderId,
+    leaderName: u.leaderId ? (nameOf.get(u.leaderId) ?? u.leaderId) : null,
+    isTarget: u.isTarget,
+    active: u.active,
+    path: pathOf(u.id, byId),
+    division: divisionNameOf(u.id, byId),
+    /** 評価対象か（自分または祖先の指定を含む） */
+    inTargetScope: inTargetScope(u.id, byId),
+    directMembers: directCount.get(u.id) ?? 0,
+    totalMembers: descendants(u.id),
+  }));
+}
+
+export async function createOrgUnit(input: {
+  name: string;
+  level: string;
+  parentId: number | null;
+  actor: string;
+}) {
+  const name = input.name.trim();
+  if (!name) throw new ConflictError("組織名を入力してください");
+  if (!ORG_LEVELS.includes(input.level as OrgLevel)) throw new ConflictError("階層が不正です");
+  if (input.level === "事業部" && input.parentId !== null) {
+    throw new ConflictError("事業部は最上位のため親を指定できません");
+  }
+  if (input.level !== "事業部" && input.parentId === null) {
+    throw new ConflictError("グループ・チームは親組織を選択してください");
+  }
+  const dup = await prisma.orgUnit.findFirst({ where: { name, parentId: input.parentId } });
+  if (dup) throw new ConflictError("同じ親の下に同名の組織があります");
+  const created = await prisma.orgUnit.create({
+    data: { name, level: input.level, parentId: input.parentId },
+  });
+  await audit(input.actor, "org.create", "OrgUnit", String(created.id), {
+    name,
+    level: input.level,
+    parentId: input.parentId,
+  });
+  return created;
+}
+
+export async function updateOrgUnit(
+  id: number,
+  patch: { name?: string; leaderId?: string | null; isTarget?: boolean; active?: boolean },
+  actor: string,
+) {
+  const unit = await prisma.orgUnit.findUnique({ where: { id } });
+  if (!unit) throw new NotFoundError("組織が見つかりません");
+  const data: Prisma.OrgUnitUpdateInput = {};
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new ConflictError("組織名を入力してください");
+    const dup = await prisma.orgUnit.findFirst({
+      where: { name, parentId: unit.parentId, id: { not: id } },
+    });
+    if (dup) throw new ConflictError("同じ親の下に同名の組織があります");
+    data.name = name;
+  }
+  if (patch.leaderId !== undefined) data.leaderId = patch.leaderId || null;
+  if (patch.isTarget !== undefined) data.isTarget = patch.isTarget;
+  if (patch.active !== undefined) data.active = patch.active;
+  const updated = await prisma.orgUnit.update({ where: { id }, data });
+  // 事業部名を変えたら、配下メンバーの division 表記も追随させる。
+  if (patch.name !== undefined) await syncMemberDivisions(actor);
+  await audit(actor, "org.update", "OrgUnit", String(id), patch as Prisma.InputJsonValue);
+  return updated;
+}
+
+export async function deleteOrgUnit(id: number, actor: string) {
+  const [children, members] = await Promise.all([
+    prisma.orgUnit.count({ where: { parentId: id } }),
+    prisma.member.count({ where: { orgUnitId: id } }),
+  ]);
+  if (children > 0) throw new ConflictError("配下の組織があるため削除できません");
+  if (members > 0) throw new ConflictError(`所属メンバーが ${members} 名いるため削除できません`);
+  await prisma.orgUnit.delete({ where: { id } });
+  await audit(actor, "org.delete", "OrgUnit", String(id), {});
+  return { id };
+}
+
+/** メンバーの所属組織を設定する（null で未所属に戻す）。division は事業部祖先へ追随。 */
+export async function setMemberOrgUnit(personId: string, orgUnitId: number | null, actor: string) {
+  const units = await prisma.orgUnit.findMany();
+  const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  if (orgUnitId !== null && !byId.has(orgUnitId)) throw new NotFoundError("組織が見つかりません");
+  const division = orgUnitId === null ? null : divisionNameOf(orgUnitId, byId);
+  await prisma.member.update({
+    where: { personId },
+    data: {
+      orgUnitId,
+      // 事業部名は評価台帳・集計で使うため、組織から導出して保持する。
+      ...(division ? { division, divisionOverride: division } : {}),
+    },
+  });
+  await audit(actor, "member.org.set", "Member", personId, { orgUnitId, division });
+  return { personId, orgUnitId, division };
+}
+
+/** 組織から導出される事業部名を全メンバーへ反映する（組織名変更時など）。 */
+export async function syncMemberDivisions(actor: string) {
+  const [units, members] = await Promise.all([
+    prisma.orgUnit.findMany(),
+    prisma.member.findMany({
+      where: { orgUnitId: { not: null } },
+      select: { personId: true, orgUnitId: true, division: true },
+    }),
+  ]);
+  const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  let updated = 0;
+  for (const m of members) {
+    const division = divisionNameOf(m.orgUnitId, byId);
+    if (division && division !== m.division) {
+      await prisma.member.update({
+        where: { personId: m.personId },
+        data: { division, divisionOverride: division },
+      });
+      updated += 1;
+    }
+  }
+  if (updated > 0) await audit(actor, "member.division.sync", "Member", null, { updated });
+  return { updated };
+}
+
+/**
+ * 評価対象の personId 一覧。
+ * 組織が登録されていれば「自分または祖先が対象に指定された組織の所属者」、
+ * 組織が未登録なら従来どおり対象事業部（TargetDivision）で判定する。
+ */
+export async function targetPersonIds(): Promise<string[] | null> {
+  const units = await prisma.orgUnit.findMany();
+  if (units.length === 0) return null; // 従来動作（TargetDivision）にフォールバック
+  const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  const targetIds = new Set(units.filter((u) => inTargetScope(u.id, byId)).map((u) => u.id));
+  if (targetIds.size === 0) return null;
+  const members = await prisma.member.findMany({
+    where: { status: "在籍", orgUnitId: { in: [...targetIds] } },
+    select: { personId: true },
+  });
+  return members.map((m) => m.personId);
+}
+
+// ─────────────────────────────────────────────
+// 役職の紐付け（jinjer の役職名 → Dig評価の役職）
+// ─────────────────────────────────────────────
+export const listPositionRules = () =>
+  prisma.positionRule.findMany({ orderBy: { pattern: "asc" } });
+
+export async function upsertPositionRule(pattern: string, position: string, actor: string) {
+  const p = pattern.trim();
+  if (!p) throw new ConflictError("jinjer の役職名を入力してください");
+  const rule = await prisma.positionRule.upsert({
+    where: { pattern: p },
+    update: { position: position as Prisma.PositionRuleUpdateInput["position"] },
+    create: { pattern: p, position: position as Prisma.PositionRuleCreateInput["position"] },
+  });
+  await audit(actor, "position.rule.upsert", "PositionRule", String(rule.id), { pattern: p, position });
+  return rule;
+}
+
+export async function deletePositionRule(id: number, actor: string) {
+  await prisma.positionRule.delete({ where: { id } });
+  await audit(actor, "position.rule.delete", "PositionRule", String(id), {});
+  return { id };
+}
+
+/**
+ * 紐付けルールを全在籍メンバーへ適用する（jinjerPosition → position）。
+ * 一覧で手入力した人（positionManual）は上書きしない。
+ */
+export async function applyPositionRules(actor: string) {
+  const rules = await prisma.positionRule.findMany();
+  const map = new Map(rules.map((r) => [r.pattern, r.position]));
+  const members = await prisma.member.findMany({
+    where: { status: "在籍", positionManual: false, jinjerPosition: { not: null } },
+    select: { personId: true, jinjerPosition: true, position: true },
+  });
+  let updated = 0;
+  for (const m of members) {
+    const next = map.get(m.jinjerPosition ?? "");
+    if (next && next !== m.position) {
+      await prisma.member.update({ where: { personId: m.personId }, data: { position: next } });
+      updated += 1;
+    }
+  }
+  await audit(actor, "position.rule.apply", "Member", null, { updated, rules: rules.length });
+  return { updated, total: members.length, rules: rules.length };
+}
+
+/** jinjer から取得した役職名の一覧（紐付け画面の候補）。 */
+export async function listJinjerPositions() {
+  const rows = await prisma.member.groupBy({
+    by: ["jinjerPosition"],
+    where: { status: "在籍", jinjerPosition: { not: null } },
+    _count: { _all: true },
+  });
+  return rows
+    .map((r) => ({ name: r.jinjerPosition as string, count: r._count._all }))
+    .sort((a, b) => b.count - a.count);
+}
+
 // ─────────────────────────────────────────────
 // 部署の紐づけ（jinjer 所属名 → dgloss 事業部）
 // ─────────────────────────────────────────────
@@ -2589,7 +2922,8 @@ function monthlySalaryOf(m: { basePay: Prisma.Decimal; hourlyWage: Prisma.Decima
 export async function autoAssignSalaryRanges(division: string | undefined, actor: string) {
   const rangeMap = await getSalaryRangeMap();
   const members = await prisma.member.findMany({
-    where: { status: "在籍", ...(division ? { division } : {}) },
+    // 一覧で金額を手入力した人は自動判定で上書きしない。
+    where: { status: "在籍", positionBaseManual: false, ...(division ? { division } : {}) },
   });
   let updated = 0;
   let skipped = 0;
@@ -2629,7 +2963,11 @@ export async function bulkUpdatePositionBase(
   let updated = 0;
   for (const r of rows) {
     const data: Prisma.MemberUpdateInput = {};
-    if (r.position) data.position = r.position as Prisma.MemberUpdateInput["position"];
+    // 役職を手入力したら、以降は jinjer の紐付けルールで上書きしない。
+    if (r.position) {
+      data.position = r.position as Prisma.MemberUpdateInput["position"];
+      data.positionManual = true;
+    }
     if (r.evaluationCycle) data.evaluationCycle = r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"];
     if (r.salaryGrade) data.salaryGrade = r.salaryGrade;
 
@@ -2641,10 +2979,17 @@ export async function bulkUpdatePositionBase(
     const position = r.position ?? current?.position;
     const grade = r.salaryGrade ?? current?.salaryGrade ?? undefined;
     const fromRange = position && grade ? rangeMap[position]?.[grade] : undefined;
-    if (typeof fromRange === "number") {
+    // 金額を直接入力した場合は、それを優先して手入力扱いにする（自動判定で上書きしない）。
+    // レンジを選び直した場合はレンジの金額を採用し、自動判定の対象に戻す。
+    if (typeof r.positionBase === "number" && r.positionBase >= 0 && r.salaryGrade === undefined) {
+      data.positionBase = r.positionBase;
+      data.positionBaseManual = true;
+    } else if (typeof fromRange === "number") {
       data.positionBase = fromRange;
+      data.positionBaseManual = false;
     } else if (typeof r.positionBase === "number" && r.positionBase >= 0) {
       data.positionBase = r.positionBase;
+      data.positionBaseManual = true;
     }
 
     if (Object.keys(data).length === 0) continue;

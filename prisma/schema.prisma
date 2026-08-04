@@ -175,6 +175,40 @@ model Account {
   @@index([role])
 }
 
+
+/// 組織（事業部 > グループ > チーム）。事業部名の自由記入をやめ、ここで一元管理する。
+model OrgUnit {
+  id        Int      @id @default(autoincrement())
+  name      String
+  /// 階層。事業部 / グループ / チーム
+  level     String
+  parentId  Int?
+  parent    OrgUnit?  @relation("OrgTree", fields: [parentId], references: [id])
+  children  OrgUnit[] @relation("OrgTree")
+  /// この組織の長（配下メンバーの予算Digを合算する対象）。Member.personId
+  leaderId  String?
+  /// Dig評価の対象か。自分または祖先が対象なら配下は全員対象になる
+  isTarget  Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members Member[]
+
+  @@index([parentId])
+  @@index([level])
+}
+
+/// jinjer の役職名 → Dig評価の役職 の紐付け（所属の紐付けと同じ考え方）
+model PositionRule {
+  id        Int      @id @default(autoincrement())
+  /// jinjer 上の役職名（完全一致）
+  pattern   String   @unique
+  position  Position
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 /// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。
 model Setting {
   yearMonth            String   @id // YYYY-MM
@@ -267,6 +301,15 @@ model Member {
   division        String
   /// jinjer 上の末端所属名（紐づけ再適用の原本）
   jinjerTeam      String?
+  /// 所属する組織（事業部/グループ/チームのいずれか）。division はこの祖先の事業部名
+  orgUnitId       Int?
+  orgUnit         OrgUnit?        @relation(fields: [orgUnitId], references: [id])
+  /// jinjer 上の役職名（紐づけの原本）
+  jinjerPosition  String?
+  /// 役職を一覧で手入力した。true なら紐づけルールで上書きしない
+  positionManual  Boolean         @default(false)
+  /// 役職ベースを一覧で手入力した。true ならレンジ自動判定で上書きしない
+  positionBaseManual Boolean      @default(false)
   /// 個別に指定した事業部。設定時は同期・ルール適用より優先される
   divisionOverride String?
   /// 給与テーブルの等級（A〜G）。役職ベースの算定元
