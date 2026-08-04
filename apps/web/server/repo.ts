@@ -762,6 +762,9 @@ export async function deleteAccount(id: string, actor: string) {
 /** アカウント一括発行のメール既定ドメイン（jinjer にメールが無い人の補完用）。 */
 const ACCOUNT_EMAIL_DOMAIN = process.env.ACCOUNT_EMAIL_DOMAIN ?? "dgloss.co.jp";
 
+/** アカウントのメールに許可する会社ドメイン（画面の案内文にも使う）。 */
+export const accountEmailDomain = () => ACCOUNT_EMAIL_DOMAIN;
+
 /** 会社メールが取れなかった人へ発行する仮メール（従業員ID@ドメイン）。 */
 export function placeholderEmailFor(personId: string): string {
   return `${personId.toLowerCase()}@${ACCOUNT_EMAIL_DOMAIN}`;
@@ -1148,7 +1151,11 @@ async function bootstrapAdminLogin(mail: string, password: string) {
   // 総当たりでの推測を避けるため、長さが同じでも定数時間で比較する。
   if (!equalsConstantTime(password, bootPassword)) return null;
 
-  const existing = await prisma.account.findFirst({ where: { email: mail } });
+  // id と email は別カラムで、本人がメールを変えると id は旧メールのまま残る。
+  // どちらで一致しても既存とみなさないと、create が id 重複で落ちる。
+  const existing = await prisma.account.findFirst({
+    where: { OR: [{ email: mail }, { id: mail }] },
+  });
   const data = {
     email: mail,
     name: existing?.name ?? "初期管理者",
@@ -1177,7 +1184,13 @@ async function bootstrapAdminLogin(mail: string, password: string) {
  * 本人がパスワードを変更する。仮パスワードの状態（mustChangePassword）でも
  * 現在のパスワードの入力を必須にする（他人が乗っ取れないようにする）。
  */
-export async function changeOwnPassword(email: string, current: string, next: string) {
+export async function changeOwnPassword(
+  email: string,
+  current: string,
+  next: string,
+  /** 仮メールを実メールへ直す場合の新しいログインID（会社ドメインのみ） */
+  newEmail?: string | null,
+) {
   const mail = email.trim().toLowerCase();
   const acc = await prisma.account.findFirst({ where: { email: mail } });
   if (!acc || !acc.active) throw new NotFoundError("アカウントが見つかりません");
@@ -1189,12 +1202,43 @@ export async function changeOwnPassword(email: string, current: string, next: st
   if (verifyPassword(next, acc.passwordHash)) {
     throw new ConflictError("現在と同じパスワードは使用できません");
   }
+
+  // メールはログインIDそのもの。誤入力で締め出されないよう、また外部アドレスへの
+  // 乗っ取りを防ぐため、会社ドメインのみ・重複なしに限って本人変更を許可する。
+  const wanted = (newEmail ?? "").trim().toLowerCase();
+  const changingEmail = wanted.length > 0 && wanted !== acc.email.toLowerCase();
+  if (changingEmail) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(wanted)) {
+      throw new ConflictError("メールアドレスの形式が正しくありません");
+    }
+    if (!wanted.endsWith(`@${ACCOUNT_EMAIL_DOMAIN}`)) {
+      throw new ConflictError(`会社のメールアドレス（@${ACCOUNT_EMAIL_DOMAIN}）を入力してください`);
+    }
+    const taken = await prisma.account.findFirst({
+      where: { email: wanted, id: { not: acc.id } },
+      select: { id: true },
+    });
+    if (taken) throw new ConflictError("このメールアドレスは既に使われています");
+  }
+
   await prisma.account.update({
     where: { id: acc.id },
-    data: { passwordHash: hashPassword(next), mustChangePassword: false },
+    data: {
+      passwordHash: hashPassword(next),
+      mustChangePassword: false,
+      ...(changingEmail ? { email: wanted } : {}),
+    },
   });
-  await audit(acc.id, "account.password.change", "Account", acc.id, {});
-  return { id: acc.id };
+  // 監査には旧→新のメールだけを残す（パスワードは平文もハッシュも記録しない）。
+  await audit(acc.id, "account.password.change", "Account", acc.id, {
+    emailChanged: changingEmail,
+    ...(changingEmail ? { from: acc.email, to: wanted } : {}),
+  });
+  // 従業員マスタ側のメールも合わせて実メールにしておく（次回同期の突合に使う）。
+  if (changingEmail && acc.personId) {
+    await prisma.member.updateMany({ where: { personId: acc.personId }, data: { email: wanted } });
+  }
+  return { id: acc.id, emailChanged: changingEmail, email: changingEmail ? wanted : acc.email };
 }
 
 // ─────────────────────────────────────────────
