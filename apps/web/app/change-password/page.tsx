@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { authEnabled } from "@/auth.config";
 import { ChangePasswordForm } from "./form";
+import { accountEmailDomain, isPlaceholderEmail, resolveSessionAccount } from "@/server/repo";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,10 @@ export default async function ChangePasswordPage() {
   if (!authEnabled) redirect("/");
   const session = await auth();
   if (!session?.user?.email) redirect("/signin?from=%2Fchange-password");
+
+  // 仮メール（従業員IDから生成）なら、実メールへの変更を促す。
+  const account = await resolveSessionAccount(session.user.email, session.user.name ?? null);
+  const placeholder = isPlaceholderEmail(session.user.email, account?.personId ?? null);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-surface-panel p-6">
@@ -30,7 +35,12 @@ export default async function ChangePasswordPage() {
         </p>
         <p className="mt-1 text-xs text-ink-faint">{session.user.email}</p>
 
-        <ChangePasswordForm required={Boolean(session.user.mustChangePassword)} />
+        <ChangePasswordForm
+          required={Boolean(session.user.mustChangePassword)}
+          currentEmail={session.user.email}
+          placeholderEmail={placeholder}
+          emailDomain={accountEmailDomain()}
+        />
       </div>
     </main>
   );

@@ -502,15 +502,23 @@ export type Account = z.infer<typeof AccountSchema>;
 /**
  * 画面（タブ）へのアクセスに必要な最低ロールレベル。
  * finance(金融承認)/master(従業員マスタ)/accounts(アカウント管理)= SUPER_ADMIN のみ。
+ *
+ * **全タブを明示的に列挙すること。** 未定義のキーは既定値0（全員可）に落ちるため、
+ * 記載漏れがそのまま全員公開になる。意図して全員公開にする場合も 0 を書く。
  */
 export const TAB_MIN_LEVEL: Record<string, number> = {
   monitor: 0,
   mypage: 0, // 全員（本人の実績。ADMIN以上は他メンバーも閲覧可）
   members: 0,
   bank: 0,
+  "borrow-apply": 0, // 全員（自分の借入申請）
   bonus: 0,
   txn: 0,
+  requests: 0, // 全員（改善リクエストの投稿）
   release: 0,
+  // 全社統一給与テーブル（役職ランク×行の金額表）。個人の給与は含まない。
+  // 等級制度を全社に開示する運用のため、意図的に全員公開。
+  salary: 0,
   rules: 1, // ADMIN 以上（事業部別の予算設定・獲得ルール・途中解約アラート）
   "period-close": 1, // ADMIN 以上（承認はスーパーADMIN）
   finance: 2, // SUPER_ADMIN のみ（ディグロス金融 承認）

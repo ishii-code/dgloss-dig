@@ -13,9 +13,9 @@ export const dynamic = "force-dynamic";
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; error?: string }>;
+  searchParams: Promise<{ from?: string; error?: string; changed?: string; email?: string }>;
 }) {
-  const { from, error } = await searchParams;
+  const { from, error, changed, email } = await searchParams;
   if (!authEnabled) redirect("/");
   const session = await auth();
   if (session?.user) redirect(from && from.startsWith("/") ? from : "/");
@@ -37,6 +37,18 @@ export default async function SignInPage({
         <p className="mt-1 text-sm text-ink-muted">
           会社のメールアドレスと、管理者から配布されたパスワードを入力してください。
         </p>
+
+        {changed === "1" && (
+          <div className="mt-4 rounded-card bg-emerald-50 px-3 py-2 text-xs text-semantic-success">
+            ログインIDとパスワードを変更しました。
+            {email && (
+              <>
+                {" "}新しいログインIDは <b className="break-all">{email}</b> です。
+              </>
+            )}
+            {" "}新しいパスワードでログインしてください。
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 rounded-card bg-rose-50 px-3 py-2 text-xs text-semantic-danger">
