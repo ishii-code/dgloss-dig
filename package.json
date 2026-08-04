@@ -1,6 +1,6 @@
 {
   "name": "dgloss-dig",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "private": true,
   "description": "Dig制度（社内通貨による営業評価制度）システム — dgloss OS 画面20",
   "packageManager": "pnpm@11.13.1",

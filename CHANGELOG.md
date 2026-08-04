@@ -1,3 +1,10 @@
+# [1.37.0](https://github.com/ishii-code/dgloss-dig/compare/v1.36.0...v1.37.0) (2026-08-04)
+
+
+### Features
+
+* **rules:** 獲得ルールの表示・入力フォーマットを営業とCGで統一 ([#86](https://github.com/ishii-code/dgloss-dig/issues/86)) ([1e8a7f4](https://github.com/ishii-code/dgloss-dig/commit/1e8a7f44239a06c094e787e3fdc7787211b80ec1))
+
 # [1.36.0](https://github.com/ishii-code/dgloss-dig/compare/v1.35.0...v1.36.0) (2026-08-04)
 
 
