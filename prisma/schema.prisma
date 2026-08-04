@@ -525,7 +525,15 @@ model Transaction {
   amount      Decimal  @db.Decimal(14, 2)
   description String
   note        String?
+  /// 申請中 / 承認済 / 却下 / 取消。承認された時点で成果Digが移動する
+  status       String    @default("申請中")
+  requestedBy  String?
+  decidedBy    String?
+  decidedOn    DateTime?
+  rejectReason String?
   createdAt   DateTime @default(now())
 
   @@index([yearMonth])
+  @@index([payeeId, status])
+  @@index([payerId, status])
 }
