@@ -190,6 +190,8 @@ model OrgUnit {
   leaderId  String?
   /// Dig評価の対象か。自分または祖先が対象なら配下は全員対象になる
   isTarget  Boolean  @default(false)
+  /// インセンティブの還元率(%)。未設定なら祖先→既定20%（カスタマーグロースは5）
+  incentiveRatePct Int?
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

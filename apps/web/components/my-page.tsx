@@ -275,7 +275,7 @@ export function MyPage({
               </tbody>
             </table>
             <div className="px-3 py-2 text-[11px] text-ink-faint">
-              ※ 実績Dig = 成果Dig + ボーナスDig + 借入Dig。インセンティブ原資は成果+ボーナス（借入は除外）。
+              ※ 実績Dig = 成果Dig + ボーナスDig + 借入Dig。インセンティブ原資は予算に対する上振れ分のみ（ボーナスDig・借入Digは除外）。
             </div>
           </div>
 

@@ -14,6 +14,8 @@ const Body = z.object({
   /** Dig評価の対象にするか（配下は自動的に対象） */
   isTarget: z.boolean().optional(),
   active: z.boolean().optional(),
+  /** インセンティブ還元率(%)。null で解除（上位組織→既定20%に従う） */
+  incentiveRatePct: z.number().int().min(0).max(100).nullable().optional(),
   actor: z.string().min(1).max(64),
 });
 

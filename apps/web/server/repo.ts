@@ -1272,18 +1272,27 @@ export async function unreadCounts(accountId: string) {
 // 期末確定（Q8）: 評価を凍結し、インセン・昇降級を確定
 // ─────────────────────────────────────────────
 import { computeQuarterBalance, promotionRate, promotionStepDual } from "@dig/core";
+import { INCENTIVE_RATE } from "@dig/contracts";
 import { DEFAULT_SETTING } from "@dig/contracts";
 
 /** 対象月の評価を確定（finalized=true）し、インセン・昇降級のスナップショットを返す（Q8）。 */
 export async function finalizeMonth(yearMonth: string, actor: string) {
   const evals = await prisma.monthlyEvaluation.findMany({ where: { yearMonth } });
+  // インセンティブの還元率は組織ごと（カスタマーグロースは5%・既定は20%）。
+  const rates = await incentiveRateMap();
   const snapshot = evals.map((ev) => {
     const seika = ev.seikaDig.toNumber();
     const bonus = ev.bonusDig.toNumber();
     const loan = ev.loanDig.toNumber();
     const budget = ev.monthlyBudgetDig.toNumber();
     // Q2/Q5案2: インセン原資=成果+ボーナス（借入除外）
-    const qb = computeQuarterBalance({ personId: ev.personId, gross: seika, target: budget, bonus });
+    const qb = computeQuarterBalance({
+      personId: ev.personId,
+      gross: seika,
+      target: budget,
+      bonus,
+      incentiveRate: rates.get(ev.personId),
+    });
     // Q1案1: 昇級=借入抜き / 降級=借入込み
     const step = promotionStepDual({
       actualRate: ev.monthlyRate.toNumber(),
@@ -1805,6 +1814,9 @@ export async function getMyPageData(personId: string, yearMonths: string[]) {
     }),
   ]);
 
+  // インセンティブの還元率は所属組織で決まる（カスタマーグロースは5%）。
+  const incentiveRate = (await incentiveRateMap()).get(personId);
+
   // 月次推移＋インセンティブ見込み（原資=成果+ボーナス、借入は除外: Q2/Q5案2）。
   const months = yearMonths.map((ym) => {
     const e = evals.find((x) => x.yearMonth === ym);
@@ -1829,7 +1841,7 @@ export async function getMyPageData(personId: string, yearMonths: string[]) {
     const seika = e.seikaDig.toNumber();
     const bonus = e.bonusDig.toNumber();
     const budget = e.monthlyBudgetDig.toNumber();
-    const qb = computeQuarterBalance({ personId, gross: seika, target: budget, bonus });
+    const qb = computeQuarterBalance({ personId, gross: seika, target: budget, bonus, incentiveRate });
     return {
       yearMonth: ym,
       monthlyBudgetDig: budget,
@@ -2741,6 +2753,29 @@ interface OrgNode {
   leaderId: string | null;
   isTarget: boolean;
   active: boolean;
+  incentiveRatePct: number | null;
+}
+
+/** インセンティブ還元率（%）。自分→祖先の順に探し、無ければ既定20%。 */
+function incentiveRateOf(id: number | null, byId: Map<number, OrgNode>): number {
+  let cur = id === null ? undefined : byId.get(id);
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (typeof cur.incentiveRatePct === "number") return cur.incentiveRatePct / 100;
+    cur = cur.parentId === null ? undefined : byId.get(cur.parentId);
+  }
+  return INCENTIVE_RATE;
+}
+
+/** personId → インセンティブ還元率 のマップ（組織未設定は既定20%）。 */
+export async function incentiveRateMap(): Promise<Map<string, number>> {
+  const [units, members] = await Promise.all([
+    prisma.orgUnit.findMany(),
+    prisma.member.findMany({ where: { status: "在籍" }, select: { personId: true, orgUnitId: true } }),
+  ]);
+  const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  return new Map(members.map((m) => [m.personId, incentiveRateOf(m.orgUnitId, byId)]));
 }
 
 /** 祖先をたどって事業部の名前を返す（自分が事業部ならその名前）。 */
@@ -2810,6 +2845,9 @@ export async function listOrgUnits() {
     leaderName: u.leaderId ? (nameOf.get(u.leaderId) ?? u.leaderId) : null,
     isTarget: u.isTarget,
     active: u.active,
+    incentiveRatePct: u.incentiveRatePct,
+    /** 実際に適用される還元率(%)。未設定なら祖先→既定20 */
+    effectiveIncentiveRatePct: Math.round(incentiveRateOf(u.id, byId) * 100),
     path: pathOf(u.id, byId),
     division: divisionNameOf(u.id, byId),
     /** 評価対象か（自分または祖先の指定を含む） */
@@ -2849,7 +2887,13 @@ export async function createOrgUnit(input: {
 
 export async function updateOrgUnit(
   id: number,
-  patch: { name?: string; leaderId?: string | null; isTarget?: boolean; active?: boolean },
+  patch: {
+    name?: string;
+    leaderId?: string | null;
+    isTarget?: boolean;
+    active?: boolean;
+    incentiveRatePct?: number | null;
+  },
   actor: string,
 ) {
   const unit = await prisma.orgUnit.findUnique({ where: { id } });
@@ -2866,6 +2910,7 @@ export async function updateOrgUnit(
   }
   if (patch.leaderId !== undefined) data.leaderId = patch.leaderId || null;
   if (patch.isTarget !== undefined) data.isTarget = patch.isTarget;
+  if (patch.incentiveRatePct !== undefined) data.incentiveRatePct = patch.incentiveRatePct;
   if (patch.active !== undefined) data.active = patch.active;
   const updated = await prisma.orgUnit.update({ where: { id }, data });
   // 事業部名を変えたら、配下メンバーの division 表記も追随させる。

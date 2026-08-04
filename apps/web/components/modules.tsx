@@ -276,7 +276,11 @@ export function SettingsView() {
     { label: "正社員 共通費（座席代）", value: `${yen(s.commonCostFulltime)}/月`, note: "" },
     { label: "アルバイト 共通費", value: `${yen(s.commonCostParttime)}/月`, note: "" },
     { label: "昇降級しきい値", value: "120%↑昇2 / 100%↑昇1 / 80%↓降1 / 60%↓降2", note: "達成率で判定" },
-    { label: "インセンティブ率", value: "超過分 × 20%", note: "" },
+    {
+      label: "インセンティブ率",
+      value: "超過分 × 20%",
+      note: "原資は予算超過分のみ（ボーナスDig・借入Digは含めない）。CGは5%",
+    },
   ];
   return (
     <>

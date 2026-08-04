@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTING } from "@dig/contracts";
+import { CG_INCENTIVE_RATE, DEFAULT_SETTING } from "@dig/contracts";
 import {
   barterDig,
+  CG_SPLIT_RENEWAL_SALES_PCT,
+  CG_SPLIT_UPSELL_SALES_PCT,
+  cgChurnDig,
+  cgGrossDig,
+  cgRenewalDig,
+  cgSplit,
+  cgUpsellDig,
+  incentiveAmount,
   achievementRate,
   aggregateSeikaDig,
   blendedIncentive,
@@ -453,5 +461,115 @@ describe("barterDig（バーター契約）", () => {
 
   it("固定Digは運用値を差し替えられる", () => {
     expect(barterDig(100_000, 100_000, 300_000)).toBe(300_000);
+  });
+});
+
+describe("カスタマーグロースの獲得Dig", () => {
+  it("アップセル: 増分月額 × 粗利率50% × 残契約月数", () => {
+    // 15万円/月 の増分・残10ヶ月 → 150,000 × 0.5 × 10 = 750,000
+    expect(cgUpsellDig(150_000, 10)).toBe(750_000);
+  });
+
+  it("更新: 月額 × 粗利率50% × 更新期間", () => {
+    // 30万円/月・12ヶ月更新 → 300,000 × 0.5 × 12 = 1,800,000
+    expect(cgRenewalDig(300_000, 12)).toBe(1_800_000);
+  });
+
+  it("粗利は千円単位で切り捨てる", () => {
+    // 100,999 × 0.5 × 1 = 50,499.5 → 四捨五入 50,500 → 千円切捨 50,000
+    expect(cgGrossDig(100_999, 1)).toBe(50_000);
+  });
+
+  it("更新月での解約（満了）はマイナスなし", () => {
+    expect(cgChurnDig(300_000, 0, true)).toBe(0);
+    // 残月数があっても、更新月での終了ならマイナスにしない
+    expect(cgChurnDig(300_000, 6, true)).toBe(0);
+  });
+
+  it("途中解約は残存期間の粗利をマイナス計上", () => {
+    // 30万円/月・残8ヶ月 → 300,000 × 0.5 × 8 = 1,200,000 のマイナス
+    expect(cgChurnDig(300_000, 8, false)).toBe(-1_200_000);
+  });
+
+  it("途中解約でも残月数0ならマイナスなし", () => {
+    expect(cgChurnDig(300_000, 0, false)).toBe(0);
+  });
+
+  it("分配: アップセルは CG70 / 営業30", () => {
+    expect(cgSplit(750_000, CG_SPLIT_UPSELL_SALES_PCT)).toEqual({ cg: 525_000, sales: 225_000 });
+  });
+
+  it("分配: 更新は CG80 / 営業20", () => {
+    expect(cgSplit(1_800_000, CG_SPLIT_RENEWAL_SALES_PCT)).toEqual({ cg: 1_440_000, sales: 360_000 });
+  });
+
+  it("分配は原資を増やさない（端数はCG側へ寄せる）", () => {
+    const r = cgSplit(1_001, 30);
+    expect(r.cg + r.sales).toBe(1_001);
+    expect(r.sales).toBe(300);
+  });
+
+  it("分配率0%なら全額CG（初回営業が退職済みのケース）", () => {
+    expect(cgSplit(500_000, 0)).toEqual({ cg: 500_000, sales: 0 });
+  });
+
+  it("マイナスDigは分配しない（チャーンはCGが負う）", () => {
+    expect(cgSplit(-1_200_000, 30)).toEqual({ cg: 0, sales: 0 });
+  });
+});
+
+describe("インセンティブ還元率（事業部で異なる）", () => {
+  it("既定は20%（営業）", () => {
+    expect(incentiveAmount(1_000_000)).toBe(200_000);
+  });
+
+  it("カスタマーグロースは5%", () => {
+    expect(incentiveAmount(1_000_000, CG_INCENTIVE_RATE)).toBe(50_000);
+  });
+
+  it("computeQuarterBalance に率を渡せる", () => {
+    // 上振れ 100万 → 5% = 5万
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 5_000_000,
+      target: 4_000_000,
+      bonus: 0,
+      incentiveRate: CG_INCENTIVE_RATE,
+    });
+    expect(r.balance).toBe(1_000_000);
+    expect(r.incentive).toBe(50_000);
+  });
+
+  it("未達ならインセンなし", () => {
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 3_000_000,
+      target: 4_000_000,
+      bonus: 0,
+      incentiveRate: CG_INCENTIVE_RATE,
+    });
+    expect(r.incentive).toBe(0);
+  });
+
+  it("ボーナスDigはインセン原資に含めない（残高には積む）", () => {
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 5_000_000,
+      target: 4_000_000,
+      bonus: 500_000,
+    });
+    expect(r.balance).toBe(1_500_000); // 残高はボーナス込み
+    expect(r.incentive).toBe(200_000); // 上振れ100万 × 20%（ボーナスは除外）
+  });
+
+  it("未達でもボーナスがあればインセンは付かない", () => {
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 3_000_000,
+      target: 4_000_000,
+      bonus: 1_000_000,
+    });
+    expect(r.balance).toBe(1_000_000);
+    expect(r.incentive).toBe(0);
   });
 });
