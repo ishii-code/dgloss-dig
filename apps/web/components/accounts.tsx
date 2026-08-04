@@ -20,6 +20,8 @@ interface Account {
   /** パスワード発行済みか */
   hasPassword?: boolean;
   mustChangePassword?: boolean;
+  /** 会社メールが取れず従業員IDから生成した仮メールか */
+  placeholderEmail?: boolean;
 }
 
 const empty: Account = { id: "", email: "", name: "", role: "USER", personId: null, active: true };
@@ -45,6 +47,7 @@ interface ProvisionResult {
   updated: number;
   skipped: { personId: string; name: string; reason: string }[];
   placeholders: { personId: string; name: string; email: string }[];
+  emailUpgraded?: { personId: string; name: string; from: string; to: string }[];
   credentials: { personId: string; name: string; email: string; temporaryPassword: string }[];
 }
 
@@ -149,6 +152,7 @@ export function AccountsAdmin() {
       });
       setResult(res);
       const parts = [`対象${res.targets}名`, `新規${res.created}件`, `既存${res.updated}件（権限は変更なし）`];
+      if ((res.emailUpgraded?.length ?? 0) > 0) parts.push(`会社メールへ差し替え${res.emailUpgraded?.length}件`);
       if (res.placeholders.length > 0) parts.push(`仮メール${res.placeholders.length}件（要修正）`);
       if (res.skipped.length > 0) parts.push(`スキップ${res.skipped.length}件`);
       setMsg(`アカウント作成完了: ${parts.join(" / ")}\n続けて「表示中のメンバーに仮パスワードを発行」を押してください。`);
@@ -345,6 +349,16 @@ export function AccountsAdmin() {
           </label>
         </div>
 
+        {visible.some((a) => a.placeholderEmail) && (
+          <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">
+            表示中に<b>仮メールのアカウントが {visible.filter((a) => a.placeholderEmail).length}名</b>います
+            （<span className="tabular">従業員ID@dgloss.co.jp</span> の形式）。jinjer に会社メールが未登録の人です。
+            このままでは本人がログインできないため、
+            <b>先に jinjer へ会社メールを登録 →「① jinjer同期」→ 下の折りたたみからアカウント作成を再実行</b>
+            すると実メールへ自動で差し替わります。個別に直す場合は一覧の「編集」からメールを修正してください。
+          </div>
+        )}
+
         <div className="text-xs text-ink-muted">
           仮パスワードは<b>上で表示中のアカウント</b>にだけ発行します（25名ずつ分割して実行するため、
           人数が多くてもタイムアウトしません）。チェックを入れない限り、既にパスワードがある人は据え置きます。
@@ -521,7 +535,17 @@ export function AccountsAdmin() {
             {visible.map((a) => (
               <tr key={a.id} className="border-b border-surface-border last:border-0">
                 <td className="px-4 py-2.5 font-medium text-ink">{a.name}</td>
-                <td className="px-4 py-2.5 text-ink-muted">{a.email}</td>
+                <td className="px-4 py-2.5 text-ink-muted">
+                  {a.email}
+                  {a.placeholderEmail && (
+                    <span
+                      title="jinjer に会社メールが無いため従業員IDから生成した仮メールです。このままではログインできません。"
+                      className="ml-1.5 rounded-pill bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-semantic-warn"
+                    >
+                      仮メール
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-ink-muted">{a.division ?? "—"}</td>
                 <td className="px-4 py-2.5">
                   <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${roleStyle(a.role)}`}>
