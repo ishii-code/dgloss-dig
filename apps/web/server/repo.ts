@@ -714,7 +714,7 @@ export async function updateLoanDefaults(input: {
 export async function listAccounts() {
   const [accounts, members] = await Promise.all([
     prisma.account.findMany({ orderBy: [{ role: "asc" }, { name: "asc" }] }),
-    prisma.member.findMany({ select: { personId: true, division: true, status: true } }),
+    prisma.member.findMany({ select: { personId: true, division: true, status: true, orgUnitId: true } }),
   ]);
   const byPerson = new Map(members.map((m) => [m.personId, m]));
   return accounts.map((a) => {
@@ -727,6 +727,8 @@ export async function listAccounts() {
       personId: a.personId,
       active: a.active,
       division: m?.division ?? null,
+      /** 所属組織（アカウント一覧を組織で絞り込むのに使う） */
+      orgUnitId: m?.orgUnitId ?? null,
       memberStatus: m?.status ?? null,
       /** 会社メールが取れず従業員IDから生成した仮メールか */
       placeholderEmail: isPlaceholderEmail(a.email, a.personId),

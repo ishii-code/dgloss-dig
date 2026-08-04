@@ -17,6 +17,8 @@ interface Account {
   active: boolean;
   /** 従業員マスタの事業部（未紐付けは null） */
   division?: string | null;
+  /** 従業員マスタの所属組織（組織で絞り込むのに使う） */
+  orgUnitId?: number | null;
   /** パスワード発行済みか */
   hasPassword?: boolean;
   mustChangePassword?: boolean;
@@ -44,6 +46,7 @@ interface OrgOption {
   id: number;
   name: string;
   level: string;
+  parentId: number | null;
   path: string;
   /** 直下の人数（配下含む） */
   totalMembers: number;
@@ -87,16 +90,42 @@ export function AccountsAdmin() {
   const [linkInput, setLinkInput] = useState<Record<string, string>>({});
   // 評価対象の事業部（この事業部のメンバーだけを既定で表示する）。
   const [targetDivisions, setTargetDivisions] = useState<string[]>([]);
-  const [showAll, setShowAll] = useState(false);
   const [resetExisting, setResetExisting] = useState(false);
-  // 一括発行の対象組織（事業部またはグループ）。配下のチームまで含めて発行する。
-  const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
-  const [provisionOrgId, setProvisionOrgId] = useState("");
+  // 組織の全階層（配下の解決に使う）。一覧の絞り込みと一括発行の両方がこれを見る。
+  const [allOrgUnits, setAllOrgUnits] = useState<OrgOption[]>([]);
+  /** "" = 評価対象事業部 / "all" = 全アカウント / それ以外 = 組織ID */
+  const [orgFilter, setOrgFilter] = useState("");
 
-  // 画面に表示するアカウント（既定は評価対象事業部のみ）。
-  const visible = showAll
-    ? accounts
-    : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
+  // 一括発行で選べるのは事業部とグループ（チームは出さない）。
+  const orgOptions = allOrgUnits.filter((o) => o.level === "事業部" || o.level === "グループ");
+
+  /** 指定した組織とその配下すべての組織ID。 */
+  const descendantsOf = (rootId: number): Set<number> => {
+    const ids = new Set<number>([rootId]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const u of allOrgUnits) {
+        if (u.parentId !== null && ids.has(u.parentId) && !ids.has(u.id)) {
+          ids.add(u.id);
+          grew = true;
+        }
+      }
+    }
+    return ids;
+  };
+
+  const selectedOrg = orgOptions.find((o) => String(o.id) === orgFilter) ?? null;
+
+  // 画面に表示するアカウント。組織を選べばその組織＋配下、既定は評価対象事業部。
+  const visible = selectedOrg
+    ? (() => {
+        const ids = descendantsOf(selectedOrg.id);
+        return accounts.filter((a) => a.orgUnitId != null && ids.has(a.orgUnitId));
+      })()
+    : orgFilter === "all"
+      ? accounts
+      : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
 
   async function load() {
     try {
@@ -115,8 +144,7 @@ export function AccountsAdmin() {
       setUnlinked(u);
       setPickerMembers(m);
       setTargetDivisions(t.targets ?? []);
-      // 一括発行は「事業部全体」か「グループまで」を選ぶ。チームは選択肢に出さない。
-      setOrgOptions(o.filter((x) => x.level === "事業部" || x.level === "グループ"));
+      setAllOrgUnits(o);
     } catch {
       /* 紐付け待ちの取得失敗は一覧表示に影響させない */
     }
@@ -158,9 +186,9 @@ export function AccountsAdmin() {
    * ユーザー権限のアカウントを一括発行する（既存アカウントの権限は変更しない）。
    */
   async function provision() {
-    const org = orgOptions.find((o) => String(o.id) === provisionOrgId);
+    const org = selectedOrg;
     if (!org) {
-      setMsg("対象の組織（事業部またはグループ）を選択してください");
+      setMsg("上の「表示対象」で事業部またはグループを選んでください");
       return;
     }
     const label = `${org.path}（配下含む ${org.totalMembers}名）`;
@@ -338,21 +366,22 @@ export function AccountsAdmin() {
       <div className="mb-4 rounded-card border border-surface-border bg-white p-4 shadow-card">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <span className="text-sm font-semibold text-ink">表示対象</span>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input
-              type="radio"
-              checked={!showAll}
-              onChange={() => setShowAll(false)}
-            />
-            評価対象事業部のみ
-            <span className="text-xs text-ink-faint">
-              （{targetDivisions.length > 0 ? targetDivisions.join("・") : "未設定"}）
-            </span>
-          </label>
-          <label className="flex items-center gap-1.5 text-sm">
-            <input type="radio" checked={showAll} onChange={() => setShowAll(true)} />
-            全アカウント
-          </label>
+          {/* この選択が一覧・仮パスワード発行・一括発行のすべての対象になる。 */}
+          <select
+            value={orgFilter}
+            onChange={(e) => setOrgFilter(e.target.value)}
+            className="rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
+          >
+            <option value="">
+              評価対象事業部（{targetDivisions.length > 0 ? targetDivisions.join("・") : "未設定"}）
+            </option>
+            {orgOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.path}（{o.level}・{o.totalMembers}名）
+              </option>
+            ))}
+            <option value="all">全アカウント</option>
+          </select>
           <span className="text-xs text-ink-muted">
             表示中 {visible.length}名 / 全{accounts.length}名
           </span>
@@ -400,30 +429,19 @@ export function AccountsAdmin() {
             在籍メンバーへ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使い、
             取得できない人は <span className="tabular">従業員ID@dgloss.co.jp</span> の仮メールで作ります（下に要修正として表示）。
             既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
-            <div className="mt-3 flex flex-wrap items-end gap-2">
-              <label className="block">
-                <span className="mb-1 block text-[11px] text-ink-muted">対象の組織（配下すべてが対象）</span>
-                <select
-                  value={provisionOrgId}
-                  onChange={(e) => setProvisionOrgId(e.target.value)}
-                  disabled={busy}
-                  className="w-72 rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
-                >
-                  <option value="">選択してください</option>
-                  {orgOptions.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.path}（{o.level}・{o.totalMembers}名）
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => void provision()}
-                disabled={busy || !provisionOrgId}
+                disabled={busy || !selectedOrg}
                 className="rounded-card bg-brand-primary px-4 py-1.5 font-bold text-white disabled:opacity-50"
               >
-                この組織に一括発行
+                {selectedOrg ? `${selectedOrg.path} に一括発行` : "上で組織を選んでください"}
               </button>
+              {selectedOrg && (
+                <span className="text-[11px] text-ink-muted">
+                  配下含む {selectedOrg.totalMembers}名が対象
+                </span>
+              )}
             </div>
             {orgOptions.length === 0 && (
               <div className="mt-2 text-semantic-warn">
@@ -431,8 +449,10 @@ export function AccountsAdmin() {
               </div>
             )}
             <div className="mt-2 text-[11px] text-ink-faint">
-              ※ 事業部を選ぶとその事業部全体（配下のグループ・チームを含む）、グループを選ぶとそのグループ配下が対象になります。
+              ※ 上の「表示対象」で選んだ組織が対象です。事業部を選ぶとその事業部全体（配下のグループ・チームを含む）、
+              グループを選ぶとそのグループ配下が対象になります。
               組織が未設定のメンバーはどの選択肢にも含まれないため、先に全従業員一覧で組織を設定してください。
+              <b>作成しただけではパスワードは発行されません。</b>続けて上の「表示中の◯名に仮パスワードを発行」を押してください。
             </div>
           </div>
         </details>

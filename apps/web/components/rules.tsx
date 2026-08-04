@@ -21,8 +21,86 @@ const RULE_TYPES = [
   "チャーン損失",
 ] as const;
 
-/** 粗利率・分配率を使う種別（カスタマーグロース向け）。 */
-const MARGIN_TYPES: readonly string[] = ["アップセル粗利", "更新粗利", "チャーン損失"];
+/** ルールが使う入力項目。種別ごとに必要なものだけをフォームに出す。 */
+type ParamKey = "unitLine" | "unitCall" | "ratioPercent" | "fixedDig" | "marginRatePct" | "salesSharePct";
+
+const PARAM_LABEL: Record<ParamKey, string> = {
+  unitLine: "回線単価",
+  unitCall: "コール単価",
+  ratioPercent: "月額割合(%)",
+  fixedDig: "固定Dig",
+  marginRatePct: "粗利率(%)",
+  salesSharePct: "営業への分配率(%)",
+};
+
+/**
+ * 種別ごとの仕様。営業（AIテレアポ等）と CG で書式を揃えるための唯一の定義。
+ * fields = 登録フォームに出す入力項目、summary = 一覧の「パラメータ」列、formula = 算定式。
+ */
+const RULE_SPEC: Record<
+  string,
+  {
+    fields: ParamKey[];
+    summary: (r: Rule) => { label: string; value: string }[];
+    formula: string;
+  }
+> = {
+  回線コール単価: {
+    fields: ["unitLine", "unitCall"],
+    summary: (r) => [{ label: "単価", value: `回線 ${num(r.unitLine)} / コール ${num(r.unitCall)}` }],
+    formula: "回線数 × 回線単価 ＋ コール数 × コール単価",
+  },
+  初回発注1to1: {
+    fields: [],
+    summary: () => [{ label: "換算", value: "1円 = 1Dig" }],
+    formula: "初回発注額をそのままDigに換算（千円切捨）",
+  },
+  月額基本料金割合: {
+    fields: ["ratioPercent"],
+    summary: (r) => [{ label: "割合", value: `月額の ${r.ratioPercent}%` }],
+    formula: "月額基本料金 × 割合",
+  },
+  固定Dig: {
+    fields: ["fixedDig"],
+    summary: (r) => [{ label: "固定", value: `${num(r.fixedDig)} Dig` }],
+    formula: "契約1件あたり固定額",
+  },
+  バーター契約: {
+    fields: ["fixedDig"],
+    summary: (r) => [
+      { label: "同額時", value: `${num(r.fixedDig)} Dig` },
+      { label: "差額時", value: "差額（千円切捨）の 50%" },
+    ],
+    formula: "相互発注。同額なら固定、当方の発注が少なければ付与なし",
+  },
+  アップセル粗利: {
+    fields: ["marginRatePct", "salesSharePct"],
+    summary: (r) => [
+      { label: "粗利率", value: `${r.marginRatePct}%` },
+      { label: "分配", value: `CG ${100 - r.salesSharePct} : 営業 ${r.salesSharePct}` },
+    ],
+    formula: "増分月額 × 粗利率 × 残契約月数 → 分配",
+  },
+  更新粗利: {
+    fields: ["marginRatePct", "salesSharePct"],
+    summary: (r) => [
+      { label: "粗利率", value: `${r.marginRatePct}%` },
+      { label: "分配", value: `CG ${100 - r.salesSharePct} : 営業 ${r.salesSharePct}` },
+    ],
+    formula: "月額 × 粗利率 × 更新月数 → 分配",
+  },
+  チャーン損失: {
+    fields: ["marginRatePct"],
+    summary: (r) => [
+      { label: "粗利率", value: `${r.marginRatePct}%` },
+      { label: "計上", value: "残契約月数分をマイナス" },
+    ],
+    formula: "月額 × 粗利率 × 残契約月数 を マイナス計上（満了は対象外）",
+  },
+};
+
+const num = (v: number) => v.toLocaleString("ja-JP");
+const specOf = (ruleType: string) => RULE_SPEC[ruleType];
 
 interface Rule {
   id: string;
@@ -291,16 +369,16 @@ export function RulesAndContracts() {
                 <td className="px-3 py-2 font-medium text-ink">{r.name}</td>
                 <td className="px-3 py-2 text-ink-muted">{r.ruleType}</td>
                 <td className="px-3 py-2 text-ink-faint">{r.modelKeyFilter ?? "全て"}</td>
-                <td className="px-3 py-2 text-right text-xs text-ink-muted">
-                  {r.ruleType === "回線コール単価" && `回線${yen(r.unitLine)}/コール${yen(r.unitCall)}`}
-                  {r.ruleType === "月額基本料金割合" && `${r.ratioPercent}%`}
-                  {r.ruleType === "固定Dig" && `${yen(r.fixedDig)}Dig`}
-                  {r.ruleType === "初回発注1to1" && "1円=1Dig"}
-                  {r.ruleType === "バーター契約" && `同額${yen(r.fixedDig)} / 差額の50%`}
-                  {MARGIN_TYPES.includes(r.ruleType) &&
-                    (r.ruleType === "チャーン損失"
-                      ? `粗利率${r.marginRatePct}% × 残月数（マイナス計上）`
-                      : `粗利率${r.marginRatePct}% / CG ${100 - r.salesSharePct}：営業 ${r.salesSharePct}`)}
+                {/* パラメータは種別によらず「ラベル 値」の並びで揃える（RULE_SPEC が唯一の定義）。 */}
+                <td className="px-3 py-2 text-xs">
+                  <div className="flex flex-wrap justify-end gap-x-3 gap-y-0.5">
+                    {(specOf(r.ruleType)?.summary(r) ?? []).map((p) => (
+                      <span key={p.label} className="whitespace-nowrap">
+                        <span className="text-ink-faint">{p.label}</span>{" "}
+                        <span className="font-medium text-ink">{p.value}</span>
+                      </span>
+                    ))}
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-center">
                   <span className={`rounded-pill px-2 py-0.5 text-xs font-bold ${r.active ? "bg-emerald-100 text-semantic-success" : "bg-slate-100 text-ink-muted"}`}>
@@ -326,18 +404,28 @@ export function RulesAndContracts() {
               {RULE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </Field>
-          <Field label="回線単価"><input type="number" className="inp" value={form.unitLine} onChange={(e) => setForm({ ...form, unitLine: Number(e.target.value) })} /></Field>
-          <Field label="コール単価"><input type="number" className="inp" value={form.unitCall} onChange={(e) => setForm({ ...form, unitCall: Number(e.target.value) })} /></Field>
-          <Field label="月額割合(%)"><input type="number" className="inp" value={form.ratioPercent} onChange={(e) => setForm({ ...form, ratioPercent: Number(e.target.value) })} /></Field>
-          <Field label="固定Dig"><input type="number" className="inp" value={form.fixedDig} onChange={(e) => setForm({ ...form, fixedDig: Number(e.target.value) })} /></Field>
-          <Field label="粗利率(%)"><input type="number" className="inp" value={form.marginRatePct} onChange={(e) => setForm({ ...form, marginRatePct: Number(e.target.value) })} /></Field>
-          <Field label="営業への分配率(%)"><input type="number" className="inp" value={form.salesSharePct} onChange={(e) => setForm({ ...form, salesSharePct: Number(e.target.value) })} /></Field>
+          {/* 入力項目は選んだ種別が使うものだけ出す（営業もCGも同じ扱い）。 */}
+          {(specOf(form.ruleType)?.fields ?? []).map((key) => (
+            <Field key={key} label={PARAM_LABEL[key]}>
+              <input
+                type="number"
+                className="inp"
+                value={form[key]}
+                onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })}
+              />
+            </Field>
+          ))}
           <Field label="有効">
             <select className="inp" value={form.active ? "1" : "0"} onChange={(e) => setForm({ ...form, active: e.target.value === "1" })}>
               <option value="1">ON</option><option value="0">OFF</option>
             </select>
           </Field>
         </div>
+        {specOf(form.ruleType) && (
+          <div className="mt-2 text-[11px] text-ink-faint">
+            算定式: {specOf(form.ruleType)!.formula}
+          </div>
+        )}
         <button onClick={saveRule} className="mt-3 rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">保存</button>
       </div>
 
