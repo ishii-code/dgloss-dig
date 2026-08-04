@@ -1,3 +1,10 @@
+# [1.36.0](https://github.com/ishii-code/dgloss-dig/compare/v1.35.0...v1.36.0) (2026-08-04)
+
+
+### Features
+
+* **accounts:** 全従業員一覧に氏名検索、アカウント一括発行を組織選択に変更 ([#85](https://github.com/ishii-code/dgloss-dig/issues/85)) ([7cf998d](https://github.com/ishii-code/dgloss-dig/commit/7cf998d4576e74e8a6df18b36d1c0ea2b13672b6))
+
 # [1.35.0](https://github.com/ishii-code/dgloss-dig/compare/v1.34.0...v1.35.0) (2026-08-04)
 
 
