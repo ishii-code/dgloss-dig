@@ -42,6 +42,7 @@ import {
   totalCost,
   zeroSumTransfer,
   EMPTY_ORG_OVERRIDE,
+  cgRuleDig,
   inheritedOverride,
   mergeSetting,
 } from "./dig-calc.js";
@@ -266,27 +267,27 @@ describe("Dig獲得ルール（F-3・keiyaku連携）", () => {
   };
 
   it("回線コール単価: 回線2×5万 + コール3×5万 = 25万", () => {
-    const rule = { id: "r1", division: "AIテレアポ事業部", name: "AIテレアポ", ruleType: "回線コール単価" as const, modelKeyFilter: null, unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, active: true };
+    const rule = { id: "r1", division: "AIテレアポ事業部", name: "AIテレアポ", ruleType: "回線コール単価" as const, modelKeyFilter: null, unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(computeContractDig(contract, rule)).toBe(250_000);
   });
 
   it("初回発注1to1: 1,234,500 → 千円切捨 1,234,000", () => {
-    const rule = { id: "r2", division: "アポプロ", name: "アポプロ", ruleType: "初回発注1to1" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, active: true };
+    const rule = { id: "r2", division: "アポプロ", name: "アポプロ", ruleType: "初回発注1to1" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(computeContractDig(contract, rule)).toBe(1_234_000);
   });
 
   it("月額基本料金割合: 30万 × 50% = 15万", () => {
-    const rule = { id: "r3", division: "x", name: "x", ruleType: "月額基本料金割合" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 50, fixedDig: 0, active: true };
+    const rule = { id: "r3", division: "x", name: "x", ruleType: "月額基本料金割合" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 50, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(computeContractDig(contract, rule)).toBe(150_000);
   });
 
   it("modelKeyFilter 不一致 → 0", () => {
-    const rule = { id: "r4", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: "account", unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 99999, active: true };
+    const rule = { id: "r4", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: "account", unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 99999, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(computeContractDig(contract, rule)).toBe(0);
   });
 
   it("canceled 契約 → 0", () => {
-    const rule = { id: "r5", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 50000, active: true };
+    const rule = { id: "r5", division: "x", name: "x", ruleType: "固定Dig" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 50000, marginRatePct: 50, salesSharePct: 0, active: true };
     expect(computeContractDig({ ...contract, status: "canceled" }, rule)).toBe(0);
   });
 
@@ -654,5 +655,59 @@ describe("事業部別 Dig予算設定（組織ツリーで継承）", () => {
     const scoped = evaluateMonthly({ ...args, setting: cg });
     // 予算係数 4.0 → 2.0 なので、単月予算Digは半分になる。
     expect(scoped.monthlyBudgetDig).toBe(base.monthlyBudgetDig / 2);
+  });
+});
+
+describe("CGの獲得ルール（ルール登録から算定）", () => {
+  const rule = (
+    ruleType: "アップセル粗利" | "更新粗利" | "チャーン損失",
+    salesSharePct: number,
+    marginRatePct = 50,
+  ) => ({ ruleType, marginRatePct, salesSharePct, active: true }) as const;
+
+  it("アップセル: 増分15万 × 50% × 残10ヶ月 = 75万、CG70:営業30", () => {
+    const r = cgRuleDig(rule("アップセル粗利", CG_SPLIT_UPSELL_SALES_PCT), 150_000, 10);
+    expect(r.total).toBe(750_000);
+    expect(r.cg).toBe(525_000);
+    expect(r.sales).toBe(225_000);
+    expect(r.cg + r.sales).toBe(r.total); // 原資は増やさない
+  });
+
+  it("更新: 月額30万 × 50% × 12ヶ月 = 180万、CG80:営業20", () => {
+    const r = cgRuleDig(rule("更新粗利", CG_SPLIT_RENEWAL_SALES_PCT), 300_000, 12);
+    expect(r.total).toBe(1_800_000);
+    expect(r.cg).toBe(1_440_000);
+    expect(r.sales).toBe(360_000);
+  });
+
+  it("チャーン: 途中解約はマイナス、営業には分配しない", () => {
+    const r = cgRuleDig(rule("チャーン損失", 30), 300_000, 8, false);
+    expect(r.total).toBe(-1_200_000);
+    expect(r.cg).toBe(-1_200_000);
+    expect(r.sales).toBe(0);
+  });
+
+  it("チャーン: 更新月での解約（満了）は 0", () => {
+    expect(cgRuleDig(rule("チャーン損失", 30), 300_000, 8, true).total).toBe(0);
+  });
+
+  it("初回営業が退職済み（分配率0）なら CG 100%", () => {
+    const r = cgRuleDig(rule("アップセル粗利", 0), 150_000, 10);
+    expect(r.cg).toBe(750_000);
+    expect(r.sales).toBe(0);
+  });
+
+  it("粗利率はルールごとに変えられる", () => {
+    expect(cgRuleDig(rule("更新粗利", 0, 40), 300_000, 12).total).toBe(1_440_000);
+  });
+
+  it("無効なルールは 0", () => {
+    const off = { ruleType: "更新粗利" as const, marginRatePct: 50, salesSharePct: 20, active: false };
+    expect(cgRuleDig(off, 300_000, 12).total).toBe(0);
+  });
+
+  it("営業向けの種別を渡しても 0（粗利ベースではない）", () => {
+    const sales = { ruleType: "固定Dig" as const, marginRatePct: 50, salesSharePct: 0, active: true };
+    expect(cgRuleDig(sales, 300_000, 12).total).toBe(0);
   });
 });
