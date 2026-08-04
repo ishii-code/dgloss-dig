@@ -1,3 +1,10 @@
+# [1.34.0](https://github.com/ishii-code/dgloss-dig/compare/v1.33.0...v1.34.0) (2026-08-04)
+
+
+### Features
+
+* **rules:** 事業部別のDig予算設定・途中解約アラートを実装し、設定タブを廃止 ([#83](https://github.com/ishii-code/dgloss-dig/issues/83)) ([1a7e3a4](https://github.com/ishii-code/dgloss-dig/commit/1a7e3a424bffb947d7ca47bae9ec7c157e0b86d0))
+
 # [1.33.0](https://github.com/ishii-code/dgloss-dig/compare/v1.32.0...v1.33.0) (2026-08-04)
 
 
