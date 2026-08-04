@@ -41,7 +41,11 @@ import {
   surplusAllocation,
   totalCost,
   zeroSumTransfer,
+  EMPTY_ORG_OVERRIDE,
+  inheritedOverride,
+  mergeSetting,
 } from "./dig-calc.js";
+import type { OrgSettingNode, OrgSettingOverride } from "./dig-calc.js";
 
 const S = DEFAULT_SETTING;
 
@@ -571,5 +575,84 @@ describe("インセンティブ還元率（事業部で異なる）", () => {
     });
     expect(r.balance).toBe(1_000_000);
     expect(r.incentive).toBe(0);
+  });
+});
+
+describe("事業部別 Dig予算設定（組織ツリーで継承）", () => {
+  // 事業部(1) ─ グループ(2) ─ チーム(3)
+  const tree = (
+    overrides: Record<number, Partial<OrgSettingOverride>>,
+  ): Map<number, OrgSettingNode> =>
+    new Map(
+      [
+        { id: 1, parentId: null },
+        { id: 2, parentId: 1 },
+        { id: 3, parentId: 2 },
+      ].map((n) => [n.id, { ...EMPTY_ORG_OVERRIDE, ...n, ...(overrides[n.id] ?? {}) }]),
+    );
+
+  it("組織未設定なら全社設定そのまま", () => {
+    const s = mergeSetting(S, inheritedOverride(null, tree({})));
+    expect(s).toEqual(S);
+  });
+
+  it("事業部の設定が配下のチームまで降りてくる", () => {
+    const byId = tree({ 1: { budgetCoefficient: 5, commonCostFulltime: 200_000 } });
+    const s = mergeSetting(S, inheritedOverride(3, byId));
+    expect(s.budgetCoefficient).toBe(5);
+    expect(s.commonCostFulltime).toBe(200_000);
+    // 触っていない項目は全社設定のまま
+    expect(s.insuranceCoefficient).toBe(S.insuranceCoefficient);
+  });
+
+  it("近い階層の設定が上位より優先される", () => {
+    const byId = tree({ 1: { budgetCoefficient: 5 }, 2: { budgetCoefficient: 3 } });
+    expect(mergeSetting(S, inheritedOverride(3, byId)).budgetCoefficient).toBe(3);
+    expect(mergeSetting(S, inheritedOverride(1, byId)).budgetCoefficient).toBe(5);
+  });
+
+  it("項目ごとに独立して継承する", () => {
+    const byId = tree({
+      1: { budgetCoefficient: 5, promotionUpOne: 1.1 },
+      3: { budgetCoefficient: 2 },
+    });
+    const s = mergeSetting(S, inheritedOverride(3, byId));
+    expect(s.budgetCoefficient).toBe(2); // チームの値
+    expect(s.promotion.upOne).toBe(1.1); // 事業部から継承
+    expect(s.promotion.downTwo).toBe(S.promotion.downTwo); // 全社設定
+  });
+
+  it("0 は「未設定」ではなく有効な値として扱う", () => {
+    const byId = tree({ 1: { commonCostParttime: 0 } });
+    expect(mergeSetting(S, inheritedOverride(1, byId)).commonCostParttime).toBe(0);
+  });
+
+  it("親子が循環していても止まる", () => {
+    const byId = new Map<number, OrgSettingNode>([
+      [1, { ...EMPTY_ORG_OVERRIDE, id: 1, parentId: 2, budgetCoefficient: 7 }],
+      [2, { ...EMPTY_ORG_OVERRIDE, id: 2, parentId: 1 }],
+    ]);
+    expect(mergeSetting(S, inheritedOverride(2, byId)).budgetCoefficient).toBe(7);
+  });
+
+  it("事業部別の予算係数が単月予算Digに効く", () => {
+    const byId = tree({ 1: { budgetCoefficient: 2 } });
+    const cg = mergeSetting(S, inheritedOverride(1, byId));
+    const args = {
+      yearMonth: "2026-04",
+      personId: "X",
+      employmentType: "正社員" as const,
+      positionBase: 500_000,
+      joinedOn: "2020-01-01",
+      leftOn: null,
+      evaluationCycle: "四半期" as const,
+      seikaDig: 0,
+      bonusDig: 0,
+      loanDig: 0,
+    };
+    const base = evaluateMonthly({ ...args, setting: S });
+    const scoped = evaluateMonthly({ ...args, setting: cg });
+    // 予算係数 4.0 → 2.0 なので、単月予算Digは半分になる。
+    expect(scoped.monthlyBudgetDig).toBe(base.monthlyBudgetDig / 2);
   });
 });

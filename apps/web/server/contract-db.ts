@@ -10,7 +10,11 @@
  *   customer_id / customer_code / customer_name / owner / billing_mail / billing_tel /
  *   instance_id / tenant_id / contract_id / contract_no / status / model_key /
  *   start_date / end_date / plan / base_amount / bpo_fixed / monthly_total /
- *   initial_fee / setup_fee / pay_method / term_months / contract_date / auto_renew
+ *   initial_fee / setup_fee / pay_method / term_months / contract_date / auto_renew /
+ *   early_cancel_flag（途中解約フラグ）/ canceled_on（解約日）
+ *
+ * 途中解約フラグの列名は EARLY_CANCEL_COLUMNS の候補から自動で拾う。
+ * 実際の列名が候補に無い場合は CONTRACT_EARLY_CANCEL_COLUMN で明示する。
  */
 import { Pool } from "pg";
 import { prisma } from "./db";
@@ -41,7 +45,27 @@ export interface ContractMasterRow {
   termMonths: number | null;
   contractDate: string | null; // 契約締結日
   autoRenew: string | null;
+  /** 途中解約フラグ（契約管理DB側で立てる） */
+  earlyCancel: boolean;
+  /** 解約日 */
+  canceledOn: string | null;
 }
+
+/**
+ * 途中解約フラグの列名候補。契約管理DB側の命名が決まったら
+ * CONTRACT_EARLY_CANCEL_COLUMN で明示指定できる（候補より優先）。
+ */
+const EARLY_CANCEL_COLUMNS = [
+  "early_cancel_flag",
+  "early_cancel",
+  "is_early_cancel",
+  "mid_term_cancel",
+  "churn_flag",
+  "途中解約フラグ",
+];
+
+/** 解約日の列名候補。 */
+const CANCELED_ON_COLUMNS = ["canceled_on", "canceled_at", "cancel_date", "cancelled_on", "解約日"];
 
 /** 契約管理DBが設定済みか（読み取り専用URLの有無）。 */
 export function isContractDbConfigured(): boolean {
@@ -60,6 +84,22 @@ function asNumberOrNull(v: unknown): number | null {
   if (v === null || v === undefined || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** boolean/文字列/数値のどれで来ても真偽に寄せる（'t' / 'true' / 1 / 'yes' を真とする）。 */
+function asBoolean(v: unknown): boolean {
+  if (v === null || v === undefined || v === "") return false;
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  return ["t", "true", "1", "y", "yes", "はい", "有"].includes(String(v).trim().toLowerCase());
+}
+
+/** 候補列のうち最初に存在した列の値を返す。 */
+function pick(row: Record<string, unknown>, candidates: string[]): unknown {
+  for (const c of candidates) {
+    if (c in row && row[c] !== null && row[c] !== undefined) return row[c];
+  }
+  return null;
 }
 
 /** SQL識別子として安全な VIEW 名のみ許可（英数・アンダースコア・ドット）。 */
@@ -96,7 +136,29 @@ function mapRow(row: Record<string, unknown>): ContractMasterRow {
     termMonths: asNumberOrNull(row.term_months),
     contractDate: asStringOrNull(row.contract_date),
     autoRenew: asStringOrNull(row.auto_renew),
+    earlyCancel: resolveEarlyCancel(row),
+    canceledOn: asStringOrNull(pick(row, CANCELED_ON_COLUMNS)),
   };
+}
+
+/**
+ * 途中解約かどうか。契約管理DB側のフラグを正とし、フラグ列がまだ無い間だけ
+ * 「解約済み かつ 契約満了前に解約日がある」で暫定判定する。
+ */
+function resolveEarlyCancel(row: Record<string, unknown>): boolean {
+  const explicit = process.env.CONTRACT_EARLY_CANCEL_COLUMN;
+  if (explicit && explicit in row) return asBoolean(row[explicit]);
+
+  const flag = pick(row, EARLY_CANCEL_COLUMNS);
+  if (flag !== null) return asBoolean(flag);
+
+  // フォールバック（フラグ列が未整備の間）。
+  const status = (asStringOrNull(row.status) ?? "").toLowerCase();
+  if (!/cancel|解約/.test(status)) return false;
+  const canceled = toDate(asStringOrNull(pick(row, CANCELED_ON_COLUMNS)));
+  const end = toDate(asStringOrNull(row.end_date));
+  if (!canceled || !end) return false;
+  return canceled.getTime() < end.getTime();
 }
 
 /**
@@ -198,6 +260,9 @@ export async function syncContractsFromContractDb(): Promise<ContractSyncResult>
         // VIEW に明細（回線数・コール数）が無いため空。回線コール単価ルールの算定には別途明細が必要。
         lineItems: [],
         yearMonth: yearMonthOf(row),
+        // 途中解約フラグは契約管理DBを正とする。確定済みのマイナスDig（churnDig）は上書きしない。
+        earlyCancel: row.earlyCancel,
+        canceledOn: toDate(row.canceledOn),
       };
       const existing = await prisma.contract.findUnique({ where: { id }, select: { id: true } });
       if (existing) {

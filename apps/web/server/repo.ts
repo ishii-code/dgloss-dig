@@ -17,14 +17,21 @@ import {
   achievementRate,
   aggregateSeikaDig,
   buildInitialLoan,
+  cgChurnDig,
   computeContractDig,
   loanSchedule,
   cumulativeBudgetElapsed,
   cumulativeMonths,
+  EMPTY_ORG_OVERRIDE,
   evaluateMonthly,
   evaluationRank,
+  inheritedOverride,
+  mergeSetting,
+  monthDiff,
+  ORG_SETTING_KEYS,
   splitDig,
 } from "@dig/core";
+import type { OrgSettingNode, OrgSettingOverride } from "@dig/core";
 import { prisma } from "./db";
 import {
   equalsConstantTime,
@@ -361,6 +368,128 @@ export async function upsertCalcRule(input: CalcRule, actor: string) {
 export const listContracts = (yearMonth: string) =>
   prisma.contract.findMany({ where: { yearMonth }, include: { assignment: true }, orderBy: { id: "asc" } });
 
+// ─────────────────────────────────────────────
+// 途中解約（チャーン）アラート
+// 契約管理DBの途中解約フラグを日次同期で取り込み、
+// 管理者がマイナスDigを確定するまで未処理として出し続ける。
+// ─────────────────────────────────────────────
+export interface ChurnAlert {
+  contractId: string;
+  contractNo: string | null;
+  customerName: string;
+  division: string;
+  /** 月額（粗利計算のもと） */
+  monthlyAmount: number;
+  termMonths: number;
+  startDate: string | null;
+  canceledOn: string | null;
+  /** 解約日から契約満了までの残月数 */
+  remainingMonths: number;
+  /** 残存粗利から自動計算したマイナスDig（負値）。入力欄の初期値に使う */
+  suggestedDig: number;
+  /** 管理者が確定したマイナスDig。null の間はアラートが消えない */
+  churnDig: number | null;
+  churnDecidedBy: string | null;
+  churnDecidedOn: string | null;
+  churnNote: string | null;
+  /** 契約に紐づく担当者（マイナスDigを負う候補） */
+  shares: { personId: string; sharePercent: number }[];
+}
+
+const ymd = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+
+/** 解約日から契約満了までの残月数（切り上げ・マイナスにはしない）。 */
+function remainingMonthsOf(startDate: Date | null, termMonths: number, canceledOn: Date | null): number {
+  if (!startDate || termMonths <= 0 || !canceledOn) return 0;
+  const end = new Date(startDate);
+  end.setMonth(end.getMonth() + termMonths);
+  if (canceledOn >= end) return 0;
+  const months = monthDiff(ymd(canceledOn)!.slice(0, 7), ymd(end)!.slice(0, 7));
+  return Math.max(0, months);
+}
+
+/**
+ * 途中解約フラグが立っている契約の一覧。
+ * `pendingOnly` なら、まだマイナスDigが確定していないもの（＝アラート対象）だけ返す。
+ */
+export async function listChurnAlerts(pendingOnly = false): Promise<ChurnAlert[]> {
+  const rows = await prisma.contract.findMany({
+    where: { earlyCancel: true, ...(pendingOnly ? { churnDig: null } : {}) },
+    include: { assignment: true },
+    orderBy: [{ canceledOn: "desc" }, { id: "asc" }],
+  });
+  return rows.map((c) => {
+    const monthlyAmount = c.baseAmount.toNumber();
+    const remaining = remainingMonthsOf(c.startDate, c.termMonths, c.canceledOn);
+    return {
+      contractId: c.id,
+      contractNo: c.contractNo,
+      customerName: c.customerName,
+      division: c.division,
+      monthlyAmount,
+      termMonths: c.termMonths,
+      startDate: ymd(c.startDate),
+      canceledOn: ymd(c.canceledOn),
+      remainingMonths: remaining,
+      // 途中解約なので atRenewal=false。更新月での解約はフラグが立たない想定。
+      suggestedDig: cgChurnDig(monthlyAmount, remaining, false),
+      churnDig: c.churnDig ? c.churnDig.toNumber() : null,
+      churnDecidedBy: c.churnDecidedBy,
+      churnDecidedOn: c.churnDecidedOn ? c.churnDecidedOn.toISOString() : null,
+      churnNote: c.churnNote,
+      shares: ((c.assignment?.shares ?? []) as AssignmentShare[]).map((s) => ({
+        personId: s.personId,
+        sharePercent: s.sharePercent,
+      })),
+    };
+  });
+}
+
+/** アラートバッジ用の未処理件数。 */
+export async function countPendingChurn(): Promise<number> {
+  return prisma.contract.count({ where: { earlyCancel: true, churnDig: null } });
+}
+
+/**
+ * 途中解約のマイナスDigを確定する。確定するとアラートから消える。
+ * 金額は負値で保存する（0 を許容＝「マイナスなしで確定」もできる）。
+ */
+export async function decideChurnDig(
+  contractId: string,
+  input: { churnDig: number; note?: string | null },
+  actor: string,
+) {
+  const contract = await prisma.contract.findUnique({ where: { id: contractId } });
+  if (!contract) throw new NotFoundError("契約が見つかりません");
+  if (!contract.earlyCancel) throw new ConflictError("途中解約フラグが立っていない契約です");
+  if (!Number.isFinite(input.churnDig)) throw new ConflictError("マイナスDigを入力してください");
+  // 正の値で来ても符号を寄せる（画面の入力ゆれを吸収）。
+  const value = -Math.abs(Math.round(input.churnDig));
+  const updated = await prisma.contract.update({
+    where: { id: contractId },
+    data: {
+      churnDig: value,
+      churnDecidedBy: actor,
+      churnDecidedOn: new Date(),
+      churnNote: input.note?.trim() || null,
+    },
+  });
+  await audit(actor, "contract.churn.decide", "Contract", contractId, { churnDig: value });
+  return { contractId, churnDig: updated.churnDig?.toNumber() ?? 0 };
+}
+
+/** 確定を取り消してアラートに戻す。 */
+export async function clearChurnDig(contractId: string, actor: string) {
+  const contract = await prisma.contract.findUnique({ where: { id: contractId } });
+  if (!contract) throw new NotFoundError("契約が見つかりません");
+  await prisma.contract.update({
+    where: { id: contractId },
+    data: { churnDig: null, churnDecidedBy: null, churnDecidedOn: null, churnNote: null },
+  });
+  await audit(actor, "contract.churn.clear", "Contract", contractId, {});
+  return { contractId };
+}
+
 function pickRule(rules: CalcRule[], division: string, modelKey: string): CalcRule | undefined {
   return rules.find(
     (r) => r.active && r.division === division && (!r.modelKeyFilter || r.modelKeyFilter === modelKey),
@@ -545,6 +674,28 @@ export async function updateSetting(input: {
     },
   });
   await audit(input.actor, "setting.update", "Setting", input.yearMonth, {});
+  return s;
+}
+
+/**
+ * 借入の既定値（初回借入額・返済期間）を更新する。金融管理画面から編集する。
+ * 金利は updateAnnualRate、予算指標は組織（事業部）側で持つ。
+ */
+export async function updateLoanDefaults(input: {
+  yearMonth: string;
+  initialLoanDefault?: number;
+  loanTermMonthsDefault?: number;
+  actor: string;
+}) {
+  const data: Prisma.SettingUpdateInput = {};
+  if (input.initialLoanDefault !== undefined) data.initialLoanDefault = input.initialLoanDefault;
+  if (input.loanTermMonthsDefault !== undefined)
+    data.loanTermMonthsDefault = input.loanTermMonthsDefault;
+  const s = await prisma.setting.update({ where: { yearMonth: input.yearMonth }, data });
+  await audit(input.actor, "setting.loan.update", "Setting", input.yearMonth, {
+    initialLoanDefault: input.initialLoanDefault ?? null,
+    loanTermMonthsDefault: input.loanTermMonthsDefault ?? null,
+  });
   return s;
 }
 
@@ -1280,6 +1431,10 @@ export async function finalizeMonth(yearMonth: string, actor: string) {
   const evals = await prisma.monthlyEvaluation.findMany({ where: { yearMonth } });
   // インセンティブの還元率は組織ごと（カスタマーグロースは5%・既定は20%）。
   const rates = await incentiveRateMap();
+  // 昇降級のしきい値も事業部ごとに上書きできる（未設定は全社設定を継承）。
+  const settingRow = await prisma.setting.findUnique({ where: { yearMonth } });
+  const baseSetting = settingRow ? toSetting(settingRow) : DEFAULT_SETTING;
+  const settings = await settingMap(baseSetting);
   const snapshot = evals.map((ev) => {
     const seika = ev.seikaDig.toNumber();
     const bonus = ev.bonusDig.toNumber();
@@ -1297,7 +1452,7 @@ export async function finalizeMonth(yearMonth: string, actor: string) {
     const step = promotionStepDual({
       actualRate: ev.monthlyRate.toNumber(),
       promoRate: promotionRate(seika, bonus, budget),
-      setting: DEFAULT_SETTING,
+      setting: settings.get(ev.personId) ?? baseSetting,
     });
     return { personId: ev.personId, incentive: qb.incentive, balance: qb.balance, promotionStep: step, rank: ev.monthlyRank };
   });
@@ -1990,6 +2145,9 @@ export async function ensureInitialLoans(actor: string) {
     ).map((l) => l.borrowerId),
   );
 
+  // 予算算定に使う係数は事業部（組織）ごと。借入の金利・期間は全社共通（金融管理）。
+  const overrides = await orgOverrideMap();
+
   let created = 0;
   let skippedNoBudget = 0;
   for (const m of members) {
@@ -2025,7 +2183,7 @@ export async function ensureInitialLoans(actor: string) {
         seikaDig: 0,
         bonusDig: 0,
         loanDig: 0,
-        setting,
+        setting: mergeSetting(setting, overrides.get(m.personId) ?? EMPTY_ORG_OVERRIDE),
       }).monthlyBudgetDig;
     }
     const principal = Math.round(monthlyBudget * INITIAL_LOAN_BUDGET_MONTHS);
@@ -2105,6 +2263,9 @@ export async function generateEvaluations(
       },
     }));
   const setting = toSetting(settingRow);
+  // 予算係数・保険係数・座席代・昇降級しきい値は事業部（組織）ごとに上書きできる。
+  const settings = await settingMap(setting);
+  const settingOf = (personId: string) => settings.get(personId) ?? setting;
 
   // 対象月に計上される承認済借入（入社時の初回借入を含む）を実績Digへ反映する。
   const loanMap = await loanDigMapFor(yearMonth);
@@ -2177,7 +2338,7 @@ export async function generateEvaluations(
         seikaDig: seika,
         bonusDig: bonus,
         loanDig: loan,
-        setting,
+        setting: settingOf(m.personId),
       });
       const b = applyBudgetOverride(
         ev,
@@ -2225,7 +2386,7 @@ export async function generateEvaluations(
       seikaDig: 0,
       bonusDig: 0,
       loanDig: loanMap.get(m.personId) ?? 0,
-      setting,
+      setting: settingOf(m.personId),
     });
     const nb = applyBudgetOverride(
       ev,
@@ -2778,6 +2939,52 @@ export async function incentiveRateMap(): Promise<Map<string, number>> {
   return new Map(members.map((m) => [m.personId, incentiveRateOf(m.orgUnitId, byId)]));
 }
 
+// ─────────────────────────────────────────────
+// 事業部別の Dig予算設定（旧「設定タブ」の指標をここへ集約）
+// ─────────────────────────────────────────────
+/** Prisma の Decimal? を number|null へ。 */
+function decOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return v;
+  const n = Number((v as { toString(): string }).toString());
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Prisma の OrgUnit 行 → 継承をたどるためのノードへ。 */
+function toSettingNode(u: Record<string, unknown>): OrgSettingNode {
+  const node = { id: u.id as number, parentId: (u.parentId ?? null) as number | null } as OrgSettingNode;
+  for (const k of ORG_SETTING_KEYS) node[k] = decOrNull(u[k]);
+  return node;
+}
+
+/** personId → 所属組織から継承した上書き のマップ（組織未設定なら全項目 null）。 */
+export async function orgOverrideMap(): Promise<Map<string, OrgSettingOverride>> {
+  const [units, members] = await Promise.all([
+    prisma.orgUnit.findMany(),
+    prisma.member.findMany({ select: { personId: true, orgUnitId: true } }),
+  ]);
+  const byId = new Map(units.map((u) => [u.id, toSettingNode(u as unknown as Record<string, unknown>)]));
+  // 同じ組織の人が何度も祖先をたどらないよう、組織単位でキャッシュする。
+  const cache = new Map<number | null, OrgSettingOverride>();
+  const overrideFor = (orgUnitId: number | null) => {
+    const hit = cache.get(orgUnitId);
+    if (hit) return hit;
+    const ov = inheritedOverride(orgUnitId, byId);
+    cache.set(orgUnitId, ov);
+    return ov;
+  };
+  return new Map(members.map((m) => [m.personId, overrideFor(m.orgUnitId)]));
+}
+
+/**
+ * personId → その人に適用される Setting のマップ。
+ * 所属組織（自分→祖先）の上書きを全社設定に重ねる。組織未設定なら全社設定そのまま。
+ */
+export async function settingMap(base: Setting): Promise<Map<string, Setting>> {
+  const overrides = await orgOverrideMap();
+  return new Map([...overrides].map(([personId, ov]) => [personId, mergeSetting(base, ov)]));
+}
+
 /** 祖先をたどって事業部の名前を返す（自分が事業部ならその名前）。 */
 function divisionNameOf(id: number | null, byId: Map<number, OrgNode>): string | null {
   let cur = id === null ? undefined : byId.get(id);
@@ -2825,6 +3032,10 @@ export async function listOrgUnits() {
     }),
   ]);
   const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
+  // 事業部別の予算設定は「自分に入っている値」と「継承後の実効値」の両方を返す。
+  const settingById = new Map(
+    units.map((u) => [u.id, toSettingNode(u as unknown as Record<string, unknown>)]),
+  );
   const nameOf = new Map(members.map((m) => [m.personId, m.name]));
   const directCount = new Map<number, number>();
   for (const m of members) {
@@ -2854,6 +3065,10 @@ export async function listOrgUnits() {
     inTargetScope: inTargetScope(u.id, byId),
     directMembers: directCount.get(u.id) ?? 0,
     totalMembers: descendants(u.id),
+    /** この組織に直接入っている上書き（null は上位を継承） */
+    setting: settingById.get(u.id) as OrgSettingOverride,
+    /** 継承を解決したあと、全社設定に重ねた実効値 */
+    effectiveSetting: mergeSetting(DEFAULT_SETTING, inheritedOverride(u.id, settingById)),
   }));
 }
 
@@ -2893,7 +3108,7 @@ export async function updateOrgUnit(
     isTarget?: boolean;
     active?: boolean;
     incentiveRatePct?: number | null;
-  },
+  } & Partial<OrgSettingOverride>,
   actor: string,
 ) {
   const unit = await prisma.orgUnit.findUnique({ where: { id } });
@@ -2912,6 +3127,10 @@ export async function updateOrgUnit(
   if (patch.isTarget !== undefined) data.isTarget = patch.isTarget;
   if (patch.incentiveRatePct !== undefined) data.incentiveRatePct = patch.incentiveRatePct;
   if (patch.active !== undefined) data.active = patch.active;
+  // 事業部別の予算指標・昇降級しきい値。null を渡すと「上位を継承」に戻る。
+  for (const k of ORG_SETTING_KEYS) {
+    if (patch[k] !== undefined) data[k] = patch[k];
+  }
   const updated = await prisma.orgUnit.update({ where: { id }, data });
   // 事業部名を変えたら、配下メンバーの division 表記も追随させる。
   if (patch.name !== undefined) await syncMemberDivisions(actor);

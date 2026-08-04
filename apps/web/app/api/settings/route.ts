@@ -3,7 +3,7 @@ import { YearMonth } from "@dig/contracts";
 import { z } from "zod";
 import { error, handle, ok } from "@/server/http";
 import { requireAdmin } from "@/server/guard";
-import { getSetting, updateSetting } from "@/server/repo";
+import { getSetting, updateLoanDefaults, updateSetting } from "@/server/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,4 +33,19 @@ export const PUT = (req: NextRequest) =>
     await requireAdmin();
     const b = Body.parse(await req.json());
     return ok(await updateSetting(b));
+  });
+
+// 借入の既定値のみの部分更新（金融管理画面から）。
+const LoanBody = z.object({
+  yearMonth: YearMonth,
+  initialLoanDefault: z.number().min(0).optional(),
+  loanTermMonthsDefault: z.number().int().positive().max(600).optional(),
+  actor: z.string().min(1).max(64),
+});
+
+export const PATCH = (req: NextRequest) =>
+  handle(async () => {
+    await requireAdmin();
+    const b = LoanBody.parse(await req.json());
+    return ok(await updateLoanDefaults(b));
   });

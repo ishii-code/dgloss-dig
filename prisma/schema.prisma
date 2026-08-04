@@ -51,8 +51,19 @@ model Contract {
   createdAt    DateTime            @default(now())
   assignment   ContractAssignment?
 
+  /// 契約管理DB由来の途中解約フラグ。日次同期で取り込む
+  earlyCancel  Boolean             @default(false)
+  /// 解約日（契約管理DB由来）
+  canceledOn   DateTime?           @db.Date
+  /// 管理者が確定したマイナスDig（負値）。null の間はアラートを出し続ける
+  churnDig     Decimal?            @db.Decimal(14, 2)
+  churnDecidedBy String?
+  churnDecidedOn DateTime?
+  churnNote    String?
+
   @@index([division])
   @@index([yearMonth])
+  @@index([earlyCancel])
 }
 
 /// 契約→従業員のDig帰属（折半対応・SFA担当者から初期化／手動修正可・要件 F-3）
@@ -192,6 +203,18 @@ model OrgUnit {
   isTarget  Boolean  @default(false)
   /// インセンティブの還元率(%)。未設定なら祖先→既定20%（カスタマーグロースは5）
   incentiveRatePct Int?
+  /// ここから下は事業部別の Dig予算設定。未設定なら祖先 → 全社既定 を継承する。
+  /// 予算Dig =（役職ベース × 保険係数 × 按分 ＋ 座席代）× 予算係数
+  budgetCoefficient    Decimal? @db.Decimal(6, 3)
+  insuranceCoefficient Decimal? @db.Decimal(6, 3)
+  /// 座席代（月額）。正社員 / アルバイト
+  commonCostFulltime   Decimal? @db.Decimal(12, 2)
+  commonCostParttime   Decimal? @db.Decimal(12, 2)
+  /// 昇降級しきい値（達成率）。上2段 / 上1段 / 下1段 / 下2段
+  promotionUpTwo       Decimal? @db.Decimal(5, 3)
+  promotionUpOne       Decimal? @db.Decimal(5, 3)
+  promotionDownOne     Decimal? @db.Decimal(5, 3)
+  promotionDownTwo     Decimal? @db.Decimal(5, 3)
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

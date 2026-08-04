@@ -17,7 +17,7 @@ import type { CurrentAccount } from "@/components/loan-thread";
 import { LoanApply } from "@/components/loans-apply";
 import { MemberMaster } from "@/components/masters";
 import { MyPage } from "@/components/my-page";
-import { BonusDig, ReleaseNotes, SettingsView, TransactionLog } from "@/components/modules";
+import { BonusDig, ReleaseNotes, TransactionLog } from "@/components/modules";
 import { PeriodClose } from "@/components/period-close";
 import { FeatureRequests } from "@/components/requests";
 import { RulesAndContracts } from "@/components/rules";
@@ -49,8 +49,8 @@ const TABS: Tab[] = [
   { key: "members", label: "メンバー評価", sub: "月次更新" },
   { key: "bank", label: "Dig Bank", sub: "借入・返済" },
   { key: "borrow-apply", label: "借入申請", sub: "会社/相対" },
-  { key: "finance", label: "金融管理", sub: "承認・金利" },
-  { key: "rules", label: "Dig獲得ルール", sub: "契約→Dig反映" },
+  { key: "finance", label: "金融管理", sub: "承認・金利・借入既定" },
+  { key: "rules", label: "Dig獲得ルール", sub: "事業部別の予算・ルール" },
   { key: "bonus", label: "ボーナスDig", sub: "都度更新" },
   { key: "txn", label: "取引ログ", sub: "都度更新" },
   { key: "master", label: "従業員マスタ", sub: "編集" },
@@ -59,7 +59,6 @@ const TABS: Tab[] = [
   { key: "accounts", label: "アカウント管理", sub: "権限" },
   { key: "requests", label: "改善リクエスト", sub: "投稿・対応" },
   { key: "release", label: "リリースノート", sub: "都度更新" },
-  { key: "settings", label: "設定", sub: "マスタ" },
 ];
 
 const ROLES: Role[] = ["SUPER_ADMIN", "ADMIN", "USER"];
@@ -83,6 +82,7 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
   // 権限の動作確認が必要な場合のみ NEXT_PUBLIC_ALLOW_ROLE_SWITCH=true で切替を出す。
   const [role, setRole] = useState<Role>((signedIn?.role as Role) ?? "USER");
   const [unread, setUnread] = useState(0);
+  const [pendingChurn, setPendingChurn] = useState(0);
   // 対象月（YYYY-MM）。四半期/月セレクタで切替。
   // SSRとのhydration不一致を避けるため初期値は固定の YEAR_MONTH とし、
   // マウント後に現在月へ更新する（下の useEffect）。
@@ -125,6 +125,18 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
   useEffect(() => {
     void refreshUnread();
   }, [refreshUnread]);
+
+  // 途中解約でマイナスDigが未確定の件数。確定するまでバッジを出し続ける。
+  useEffect(() => {
+    void (async () => {
+      try {
+        const list = await apiGet<unknown[]>("/api/contracts/churn");
+        setPendingChurn(list.length);
+      } catch {
+        setPendingChurn(0);
+      }
+    })();
+  }, [tab]);
 
   // 実データ（評価）を取得。成功かつ1件以上なら実データ表示、失敗/0件は mock フォールバック。
   const loadMembers = useCallback(async () => {
@@ -183,9 +195,11 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
   const activeTab = canAccessTab(role, tab) ? tab : "monitor";
 
   // 未読バッジ: 借入申請（申請者）＋金融管理（承認者=SUPER_ADMIN）
+  // ＋ Dig獲得ルール（途中解約のマイナスDigが未確定＝管理者のみ）
   const badges: Record<string, number> = {
     "borrow-apply": unread,
     ...(role === "SUPER_ADMIN" ? { finance: unread } : {}),
+    ...(role !== "USER" ? { rules: pendingChurn } : {}),
   };
 
   return (
@@ -376,10 +390,8 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
           <AccountsAdmin />
         ) : activeTab === "requests" ? (
           <FeatureRequests />
-        ) : activeTab === "release" ? (
-          <ReleaseNotes />
         ) : (
-          <SettingsView />
+          <ReleaseNotes />
         )}
       </main>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { COMPANY_LENDER } from "@dig/contracts";
+import { COMPANY_LENDER, DEFAULT_SETTING } from "@dig/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { man, loanStatusStyle, loanTypeStyle, pct } from "@/lib/format";
@@ -137,19 +137,36 @@ export function FinanceConsole({ account, onChanged }: { account: CurrentAccount
   const [unread, setUnread] = useState<Record<number, number>>({});
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   const [open, setOpen] = useState<number | null>(null);
+  // 借入の既定値（旧「設定」タブから移設）。金利と同じくここで管理する。
+  const [initialLoan, setInitialLoan] = useState(DEFAULT_SETTING.initialLoanDefault);
+  const [loanTerm, setLoanTerm] = useState(DEFAULT_SETTING.loanTermMonthsDefault);
+  const [savedDefaults, setSavedDefaults] = useState({
+    initialLoan: DEFAULT_SETTING.initialLoanDefault,
+    loanTerm: DEFAULT_SETTING.loanTermMonthsDefault,
+  });
 
   const load = useCallback(async () => {
     try {
       const [l, m, setting, u] = await Promise.all([
         apiGet<FinLoan[]>("/api/loans"),
         apiGet<{ personId: string; name: string }[]>("/api/members"),
-        apiGet<{ annualRatePct: number }>("/api/settings?ym=2026-01"),
+        apiGet<{
+          annualRatePct: number;
+          initialLoanDefault: number;
+          loanTermMonthsDefault: number;
+        }>("/api/settings?ym=2026-01"),
         apiGet<{ perLoan: Record<number, number> }>(`/api/loans/unread?accountId=${account.id}`),
       ]);
       setLoans(l);
       setMembers(m);
       setRate(setting.annualRatePct);
       setSavedRate(setting.annualRatePct);
+      // numeric は文字列で返ることがあるため数値へ寄せる。
+      const init = Number(setting.initialLoanDefault);
+      const term = Number(setting.loanTermMonthsDefault);
+      setInitialLoan(init);
+      setLoanTerm(term);
+      setSavedDefaults({ initialLoan: init, loanTerm: term });
       setUnread(u.perLoan);
       setSource("db");
     } catch {
@@ -179,11 +196,30 @@ export function FinanceConsole({ account, onChanged }: { account: CurrentAccount
     setSavedRate(rate);
   }
 
+  const defaultsDirty =
+    initialLoan !== savedDefaults.initialLoan || loanTerm !== savedDefaults.loanTerm;
+
+  async function saveDefaults() {
+    if (source === "db") {
+      try {
+        await apiSend("/api/settings", "PATCH", {
+          yearMonth: "2026-01",
+          initialLoanDefault: initialLoan,
+          loanTermMonthsDefault: loanTerm,
+          actor: account.id,
+        });
+      } catch {
+        return;
+      }
+    }
+    setSavedDefaults({ initialLoan, loanTerm });
+  }
+
   return (
     <>
       <SectionHeader
         title="ディグロス金融 管理画面"
-        note="会社借入の承認・否決・差し戻し（チャットで過不足を確認）と金利設定"
+        note="会社借入の承認・否決・差し戻し（チャットで過不足を確認）と、金利・借入の既定値"
         accent="accent"
       />
       <div className="mb-4">
@@ -207,6 +243,47 @@ export function FinanceConsole({ account, onChanged }: { account: CurrentAccount
             <input type="range" min={0} max={24} step={0.5} value={rate} onChange={(e) => setRate(Number(e.target.value))} className="accent-brand-primary" />
             <button onClick={saveRate} disabled={rate === savedRate} className="rounded-card bg-brand-primary px-3 py-1 text-xs font-bold text-white disabled:opacity-40">保存</button>
           </div>
+        </div>
+      </div>
+
+      {/* 借入の既定値（旧「設定」タブから移設） */}
+      <div className="mb-6 rounded-card border border-surface-border bg-white p-4 shadow-card">
+        <div className="mb-3 text-sm font-semibold text-ink">借入の既定値</div>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-ink-muted">初回借入 既定額（入社時の必須借入）</span>
+            <input
+              type="number"
+              min={0}
+              step={100000}
+              value={initialLoan}
+              onChange={(e) => setInitialLoan(Number(e.target.value))}
+              className="tabular w-40 rounded-card border border-surface-border px-2 py-1.5 text-right text-sm"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-ink-muted">既定返済期間（ヶ月）</span>
+            <input
+              type="number"
+              min={1}
+              max={600}
+              value={loanTerm}
+              onChange={(e) => setLoanTerm(Number(e.target.value))}
+              className="tabular w-24 rounded-card border border-surface-border px-2 py-1.5 text-right text-sm"
+            />
+          </label>
+          <button
+            onClick={() => void saveDefaults()}
+            disabled={!defaultsDirty}
+            className="rounded-card bg-brand-primary px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40"
+          >
+            保存
+          </button>
+          {defaultsDirty && <span className="text-xs text-semantic-warn">未保存</span>}
+        </div>
+        <div className="mt-2 text-[11px] text-ink-faint">
+          ※ 実際の初回借入額は「入社月の単月予算Dig × 1.5ヶ月」で算定します。既定額は算定できない場合のフォールバックです。
+          予算係数・座席代・昇降級しきい値は事業部ごとの設定になったため「Dig獲得ルール」タブにあります。
         </div>
       </div>
 
