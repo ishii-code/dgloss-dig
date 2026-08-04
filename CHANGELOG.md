@@ -1,3 +1,10 @@
+# [1.30.0](https://github.com/ishii-code/dgloss-dig/compare/v1.29.2...v1.30.0) (2026-08-04)
+
+
+### Features
+
+* **masters:** 組織設定を新設し、従業員マスタを全従業員一覧へ整理 ([#77](https://github.com/ishii-code/dgloss-dig/issues/77)) ([5f5d72d](https://github.com/ishii-code/dgloss-dig/commit/5f5d72d374abfda24c4c744aaa109cdc6db8c699))
+
 ## [1.29.2](https://github.com/ishii-code/dgloss-dig/compare/v1.29.1...v1.29.2) (2026-08-04)
 
 
