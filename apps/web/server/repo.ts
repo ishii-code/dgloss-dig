@@ -149,6 +149,150 @@ export async function createBonusRecord(input: {
 }
 
 /** メンバー間送金（要件 F-6） */
+// ─────────────────────────────────────────────
+// Dig譲渡（申請 → 受け手の承認で成果Digが移動する）
+// ─────────────────────────────────────────────
+/**
+ * 譲渡を申請する（成果Digはまだ動かない）。
+ * 通常の配分ルールはそのままに、当事者間の相対で調整するための仕組み。
+ */
+export async function createDigTransfer(input: {
+  yearMonth: string;
+  tradedOn: string;
+  payerId: string;
+  payeeId: string;
+  amount: number;
+  description: string;
+  note: string | null;
+  actor: string;
+}) {
+  if (input.payerId === input.payeeId) throw new ConflictError("自分自身へは譲渡できません");
+  const [payer, payee] = await Promise.all([
+    prisma.member.findUnique({ where: { personId: input.payerId } }),
+    prisma.member.findUnique({ where: { personId: input.payeeId } }),
+  ]);
+  if (!payer || !payee) throw new NotFoundError("メンバーが見つかりません");
+
+  // 譲れる範囲（その月の成果Dig）を超える申請は受け付けない。
+  const ev = await prisma.monthlyEvaluation.findUnique({
+    where: { yearMonth_personId: { yearMonth: input.yearMonth, personId: input.payerId } },
+  });
+  const available = ev ? ev.seikaDig.toNumber() : 0;
+  if (input.amount > available) {
+    throw new ConflictError(
+      `${payer.name} の ${input.yearMonth} の成果Digは ${available.toLocaleString()} のため、${input.amount.toLocaleString()} は譲渡できません`,
+    );
+  }
+
+  const txn = await prisma.transaction.create({
+    data: {
+      yearMonth: input.yearMonth,
+      tradedOn: new Date(`${input.tradedOn}T00:00:00Z`),
+      payerId: input.payerId,
+      payeeId: input.payeeId,
+      amount: input.amount,
+      description: input.description,
+      note: input.note,
+      status: "申請中",
+      requestedBy: input.actor,
+    },
+  });
+  await audit(input.actor, "transfer.create", "Transaction", String(txn.id), {
+    payerId: input.payerId,
+    payeeId: input.payeeId,
+    amount: input.amount,
+  });
+  return { id: txn.id, status: txn.status };
+}
+
+/**
+ * 譲渡の承認／却下。**受け手本人（または ADMIN 以上）だけ**が判定できる。
+ * 承認した時点で、対象月の成果Digを譲り手から受け手へ移動する。
+ */
+export async function decideDigTransfer(
+  id: number,
+  approve: boolean,
+  actor: string,
+  rejectReason?: string,
+) {
+  const txn = await prisma.transaction.findUnique({ where: { id } });
+  if (!txn) throw new NotFoundError("譲渡申請が見つかりません");
+  if (txn.status !== "申請中") throw new ConflictError("既に処理済みの申請です");
+
+  const amount = txn.amount.toNumber();
+  if (approve) {
+    // 承認時点でも残高を再確認する（申請後に成果Digが減っている場合がある）。
+    const ev = await prisma.monthlyEvaluation.findUnique({
+      where: { yearMonth_personId: { yearMonth: txn.yearMonth, personId: txn.payerId } },
+    });
+    const available = ev ? ev.seikaDig.toNumber() : 0;
+    if (amount > available) {
+      throw new ConflictError(
+        `譲り手の成果Digが ${available.toLocaleString()} まで減っているため承認できません`,
+      );
+    }
+    await addSeikaDig(txn.yearMonth, txn.payerId, -amount, actor);
+    await addSeikaDig(txn.yearMonth, txn.payeeId, amount, actor);
+  }
+
+  const updated = await prisma.transaction.update({
+    where: { id },
+    data: {
+      status: approve ? "承認済" : "却下",
+      decidedBy: actor,
+      decidedOn: new Date(),
+      rejectReason: approve ? null : (rejectReason ?? null),
+    },
+  });
+  await audit(actor, approve ? "transfer.approve" : "transfer.reject", "Transaction", String(id), {
+    payerId: txn.payerId,
+    payeeId: txn.payeeId,
+    amount,
+  });
+  return { id: updated.id, status: updated.status };
+}
+
+/** 申請者が自分の申請を取り消す（申請中のみ）。 */
+export async function cancelDigTransfer(id: number, actor: string) {
+  const txn = await prisma.transaction.findUnique({ where: { id } });
+  if (!txn) throw new NotFoundError("譲渡申請が見つかりません");
+  if (txn.status !== "申請中") throw new ConflictError("既に処理済みの申請です");
+  const updated = await prisma.transaction.update({ where: { id }, data: { status: "取消" } });
+  await audit(actor, "transfer.cancel", "Transaction", String(id), {});
+  return { id: updated.id, status: updated.status };
+}
+
+/** 譲渡の一覧。personId 指定なら本人が関係する分のみ。 */
+export async function listDigTransfers(personId?: string) {
+  const rows = await prisma.transaction.findMany({
+    where: personId ? { OR: [{ payerId: personId }, { payeeId: personId }] } : {},
+    orderBy: [{ status: "asc" }, { tradedOn: "desc" }],
+    take: 300,
+  });
+  const ids = [...new Set(rows.flatMap((r) => [r.payerId, r.payeeId]))];
+  const members = await prisma.member.findMany({
+    where: { personId: { in: ids } },
+    select: { personId: true, name: true },
+  });
+  const nameOf = new Map(members.map((m) => [m.personId, m.name]));
+  return rows.map((r) => ({
+    id: r.id,
+    yearMonth: r.yearMonth,
+    tradedOn: r.tradedOn.toISOString().slice(0, 10),
+    payerId: r.payerId,
+    payerName: nameOf.get(r.payerId) ?? r.payerId,
+    payeeId: r.payeeId,
+    payeeName: nameOf.get(r.payeeId) ?? r.payeeId,
+    amount: r.amount.toNumber(),
+    description: r.description,
+    note: r.note,
+    status: r.status,
+    decidedBy: r.decidedBy,
+    decidedOn: r.decidedOn ? r.decidedOn.toISOString().slice(0, 10) : null,
+    rejectReason: r.rejectReason,
+  }));
+}
+
 export async function createTransaction(input: {
   yearMonth: string;
   tradedOn: string;

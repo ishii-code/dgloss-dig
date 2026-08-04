@@ -5,6 +5,7 @@ import { apiGet } from "@/lib/api";
 import { man, pct, rateColor, yen } from "@/lib/format";
 import { monthLabel, monthsOfQuarter, fiscalOf, quarterLabelOf, quarterOptions } from "@/lib/period";
 import { DigApplicationPanel } from "./dig-application";
+import { DigTransfer } from "./dig-transfer";
 import { RankBadge, SectionHeader } from "./ui";
 
 interface MonthRow {
@@ -286,6 +287,17 @@ export function MyPage({
             isAdmin={canViewOthers}
             isSelf={data.member.personId === personId}
             members={members}
+          />
+
+          {/* Dig譲渡（相対での配分調整） */}
+          <DigTransfer
+            personId={data.member.personId}
+            personName={data.member.name}
+            actorId={actorId}
+            isSelf={data.member.personId === personId}
+            isAdmin={canViewOthers}
+            members={members}
+            defaultYearMonth={ym}
           />
 
           {/* 借入・返済状況 */}
