@@ -408,6 +408,28 @@ export function promotionStepDual(args: {
   return 0;
 }
 
+
+// ── バーター契約（相互発注）の獲得Dig ──
+/** 同額バーターの固定Dig（運用値）。 */
+export const BARTER_EQUAL_DIG = 200_000;
+
+/**
+ * バーター契約の獲得Dig。
+ * - 同額発注 … 固定 BARTER_EQUAL_DIG
+ * - 当方の発注額（支出）が先方からの発注額（売上）より大きい … 付与なし
+ * - 当方の発注額のほうが小さい … 差額（千円切捨）の半額
+ *
+ * @param ourOrder 当方が先方へ発注した額（支出）
+ * @param theirOrder 先方が当方へ発注した額（売上）
+ */
+export function barterDig(ourOrder: number, theirOrder: number, equalDig = BARTER_EQUAL_DIG): number {
+  const ours = Math.max(0, Math.floor(ourOrder));
+  const theirs = Math.max(0, Math.floor(theirOrder));
+  if (ours === theirs) return ours === 0 ? 0 : equalDig;
+  if (ours > theirs) return 0; // 当方の持ち出しが多いケースは付与しない
+  return Math.floor(floorThousand(theirs - ours) / 2);
+}
+
 // ── 期途中入社の累計（Q7・入社月除外・翌月〜評価時点） ──
 /** 2つの YYYY-MM の月差（b - a）。 */
 export function monthDiff(aYm: string, bYm: string): number {
