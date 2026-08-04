@@ -48,6 +48,8 @@ interface OrgOption {
   level: string;
   parentId: number | null;
   path: string;
+  /** 組織設定で「Dig評価の対象」に指定されているか（自分または祖先） */
+  inTargetScope: boolean;
   /** 直下の人数（配下含む） */
   totalMembers: number;
 }
@@ -117,7 +119,17 @@ export function AccountsAdmin() {
 
   const selectedOrg = orgOptions.find((o) => String(o.id) === orgFilter) ?? null;
 
-  // 画面に表示するアカウント。組織を選べばその組織＋配下、既定は評価対象事業部。
+  // 「Dig評価の対象」は組織設定のチェックが正。組織が未登録のときだけ旧・評価対象事業部を使う。
+  const targetOrgIds = new Set(allOrgUnits.filter((o) => o.inTargetScope).map((o) => o.id));
+  const targetLabel =
+    allOrgUnits.length > 0
+      ? allOrgUnits
+          .filter((o) => o.inTargetScope && o.level === "事業部")
+          .map((o) => o.name)
+          .join("・") || "未設定"
+      : targetDivisions.join("・") || "未設定";
+
+  // 画面に表示するアカウント。組織を選べばその組織＋配下、既定はDig評価の対象。
   const visible = selectedOrg
     ? (() => {
         const ids = descendantsOf(selectedOrg.id);
@@ -125,7 +137,9 @@ export function AccountsAdmin() {
       })()
     : orgFilter === "all"
       ? accounts
-      : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
+      : allOrgUnits.length > 0
+        ? accounts.filter((a) => a.orgUnitId != null && targetOrgIds.has(a.orgUnitId))
+        : accounts.filter((a) => a.division && targetDivisions.includes(a.division));
 
   async function load() {
     try {
@@ -373,7 +387,7 @@ export function AccountsAdmin() {
             className="rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
           >
             <option value="">
-              評価対象事業部（{targetDivisions.length > 0 ? targetDivisions.join("・") : "未設定"}）
+              Dig評価の対象（{targetLabel}）
             </option>
             {orgOptions.map((o) => (
               <option key={o.id} value={o.id}>
