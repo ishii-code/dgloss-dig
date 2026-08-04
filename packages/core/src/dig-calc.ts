@@ -273,11 +273,19 @@ export function quarterBalance(
 }
 
 /**
- * インセンティブ = 残高 × 還元率。
+ * インセンティブの原資 = max(獲得粗利 − 営業目標, 0)。
+ * 残高と違い **ボーナスDig は含めない**（行動指標に還元金は付けない）。
+ */
+export function incentiveBase(gross: number, target: number): number {
+  return Math.max(gross - target, 0);
+}
+
+/**
+ * インセンティブ = 原資（上振れ分）× 還元率。
  * 既定は 20%（営業）。カスタマーグロースなど組織ごとに率が異なる場合は rate を渡す。
  */
-export function incentiveAmount(balance: number, rate = INCENTIVE_RATE): number {
-  return balance * rate;
+export function incentiveAmount(base: number, rate = INCENTIVE_RATE): number {
+  return base * rate;
 }
 
 /** 四半期/半期の残高・インセンティブ・ランクを集約（要件 F-8） */
@@ -297,7 +305,11 @@ export function computeQuarterBalance(args: {
     gross: args.gross,
     achievementRate: rate,
     balance,
-    incentive: incentiveAmount(balance, args.incentiveRate ?? INCENTIVE_RATE),
+    // 還元原資は上振れ分のみ。ボーナスDigは残高には積むが、インセンには算入しない。
+    incentive: incentiveAmount(
+      incentiveBase(args.gross, args.target),
+      args.incentiveRate ?? INCENTIVE_RATE,
+    ),
     rank: evaluationRank(rate),
   };
 }

@@ -9,7 +9,6 @@ import {
   cgRenewalDig,
   cgSplit,
   cgUpsellDig,
-  computeQuarterBalance,
   incentiveAmount,
   achievementRate,
   aggregateSeikaDig,
@@ -549,6 +548,28 @@ describe("インセンティブ還元率（事業部で異なる）", () => {
       bonus: 0,
       incentiveRate: CG_INCENTIVE_RATE,
     });
+    expect(r.incentive).toBe(0);
+  });
+
+  it("ボーナスDigはインセン原資に含めない（残高には積む）", () => {
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 5_000_000,
+      target: 4_000_000,
+      bonus: 500_000,
+    });
+    expect(r.balance).toBe(1_500_000); // 残高はボーナス込み
+    expect(r.incentive).toBe(200_000); // 上振れ100万 × 20%（ボーナスは除外）
+  });
+
+  it("未達でもボーナスがあればインセンは付かない", () => {
+    const r = computeQuarterBalance({
+      personId: "X",
+      gross: 3_000_000,
+      target: 4_000_000,
+      bonus: 1_000_000,
+    });
+    expect(r.balance).toBe(1_000_000);
     expect(r.incentive).toBe(0);
   });
 });
