@@ -72,6 +72,8 @@ export function MemberMaster() {
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
   const [ranges, setRanges] = useState<Record<string, Record<string, number>>>({});
   const [savingId, setSavingId] = useState<string | null>(null);
+  // 一覧の絞り込み（氏名・Person ID）。300名規模なのでクライアント側で十分。
+  const [query, setQuery] = useState("");
 
   async function load() {
     try {
@@ -413,6 +415,13 @@ export function MemberMaster() {
     }
   }
 
+  // 「山田 太郎」と「山田太郎」のどちらでも引けるよう、空白を除いて比較する。
+  const normalize = (v: string) => v.replace(/[\s　]/g, "").toLowerCase();
+  const q = normalize(query);
+  const visibleMembers = q
+    ? members.filter((m) => normalize(m.name).includes(q) || normalize(m.personId).includes(q))
+    : members;
+
   return (
     <>
       <SectionHeader
@@ -455,18 +464,39 @@ export function MemberMaster() {
       )}
       {msg && <div className="mb-3 whitespace-pre-wrap break-all rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">{msg}</div>}
 
+      {/* 氏名検索。300名を1画面に出しているため、目的の人へすぐ辿り着けるようにする。 */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="氏名またはPerson IDで検索"
+          className="w-64 rounded-card border border-surface-border px-3 py-1.5 text-sm"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            className="rounded-card border border-surface-border px-3 py-1.5 text-xs text-ink-muted"
+          >
+            クリア
+          </button>
+        )}
+        <span className="text-xs text-ink-muted">
+          {query ? `${visibleMembers.length} / ${members.length}名` : `${members.length}名`}
+        </span>
+      </div>
+
       <div className="mb-4 overflow-x-auto rounded-card border border-surface-border bg-white shadow-card">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
-              <th className="px-3 py-2 font-semibold">Person ID</th>
-              <th className="px-3 py-2 font-semibold">氏名</th>
+              <th className="whitespace-nowrap px-3 py-2 font-semibold">Person ID</th>
+              <th className="whitespace-nowrap px-3 py-2 font-semibold">氏名</th>
               <th className="px-3 py-2 font-semibold">jinjer所属</th>
               <th className="px-3 py-2 font-semibold">組織（この画面上）</th>
               <th className="px-3 py-2 font-semibold">jinjer役職</th>
               <th className="px-3 py-2 font-semibold">役職</th>
-              <th className="px-3 py-2 font-semibold">雇用</th>
-              <th className="px-3 py-2 font-semibold">入社日</th>
+              <th className="whitespace-nowrap px-3 py-2 font-semibold">雇用</th>
+              <th className="whitespace-nowrap px-3 py-2 font-semibold">入社日</th>
               <th className="px-3 py-2 text-right font-semibold">基本給</th>
               <th className="px-3 py-2 font-semibold">レンジ</th>
               <th className="px-3 py-2 text-right font-semibold">役職ベース</th>
@@ -476,12 +506,13 @@ export function MemberMaster() {
             </tr>
           </thead>
           <tbody className="tabular">
-            {members.map((m) => {
+            {visibleMembers.map((m) => {
               const rangeRow = ranges[m.position] ?? {};
               return (
                 <tr key={m.personId} className="border-b border-surface-border last:border-0">
-                  <td className="px-3 py-2 text-ink-muted">{m.personId}</td>
-                  <td className="px-3 py-2 font-medium text-ink">{m.name}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{m.personId}</td>
+                  {/* 氏名は折り返さない（姓と名で2行になるのを防ぐ） */}
+                  <td className="whitespace-nowrap px-3 py-2 font-medium text-ink">{m.name}</td>
                   <td className="px-3 py-2 text-xs text-ink-muted">
                     {m.jinjerTeam || <span className="text-ink-faint">—</span>}
                   </td>
@@ -515,8 +546,8 @@ export function MemberMaster() {
                       ))}
                     </select>
                   </td>
-                  <td className="px-3 py-2 text-xs text-ink-muted">{m.employmentType}</td>
-                  <td className="px-3 py-2 text-xs text-ink-muted">
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-ink-muted">{m.employmentType}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-ink-muted">
                     {m.joinedOn || <span className="text-ink-faint">—</span>}
                   </td>
                   <td className="px-3 py-2 text-right text-xs">
@@ -602,6 +633,13 @@ export function MemberMaster() {
                 </tr>
               );
             })}
+            {visibleMembers.length === 0 && (
+              <tr>
+                <td colSpan={14} className="px-3 py-4 text-center text-sm text-ink-muted">
+                  {query ? `「${query}」に一致する従業員はいません` : "従業員が登録されていません"}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
         <div className="px-3 py-2 text-[11px] text-ink-faint">
