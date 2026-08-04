@@ -1,3 +1,10 @@
+# [1.33.0](https://github.com/ishii-code/dgloss-dig/compare/v1.32.0...v1.33.0) (2026-08-04)
+
+
+### Features
+
+* **cg:** カスタマーグロースの獲得Dig算定とインセン還元率を実装 ([#82](https://github.com/ishii-code/dgloss-dig/issues/82)) ([c691b99](https://github.com/ishii-code/dgloss-dig/commit/c691b9986c955e8b34b2512868acc9af02c14ab4))
+
 # [1.32.0](https://github.com/ishii-code/dgloss-dig/compare/v1.31.0...v1.32.0) (2026-08-04)
 
 
