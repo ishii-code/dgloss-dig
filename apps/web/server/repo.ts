@@ -428,6 +428,8 @@ export async function listAccounts() {
       active: a.active,
       division: m?.division ?? null,
       memberStatus: m?.status ?? null,
+      /** 会社メールが取れず従業員IDから生成した仮メールか */
+      placeholderEmail: isPlaceholderEmail(a.email, a.personId),
       /** パスワード発行済みか（平文は返さない） */
       hasPassword: Boolean(a.passwordHash),
       mustChangePassword: a.mustChangePassword,
@@ -457,6 +459,17 @@ export async function deleteAccount(id: string, actor: string) {
 
 /** アカウント一括発行のメール既定ドメイン（jinjer にメールが無い人の補完用）。 */
 const ACCOUNT_EMAIL_DOMAIN = process.env.ACCOUNT_EMAIL_DOMAIN ?? "dgloss.co.jp";
+
+/** 会社メールが取れなかった人へ発行する仮メール（従業員ID@ドメイン）。 */
+export function placeholderEmailFor(personId: string): string {
+  return `${personId.toLowerCase()}@${ACCOUNT_EMAIL_DOMAIN}`;
+}
+
+/** そのメールが仮メール（従業員IDから生成したもの）か。 */
+export function isPlaceholderEmail(email: string, personId: string | null): boolean {
+  if (!personId) return false;
+  return email.trim().toLowerCase() === placeholderEmailFor(personId);
+}
 
 /** 氏名の突合用に空白（半角/全角）を除いて比較する。 */
 const normalizeName = (s: string): string => s.replace(/[\s　]/g, "");
@@ -575,6 +588,8 @@ export interface ProvisionAccountsResult {
   skipped: { personId: string; name: string; reason: string }[];
   /** jinjer のメールが無く personId から仮メールを生成した人（要修正） */
   placeholders: { personId: string; name: string; email: string }[];
+  /** 仮メールから会社メールへ差し替えた人 */
+  emailUpgraded: { personId: string; name: string; from: string; to: string }[];
   /**
    * 発行した仮パスワード（平文）。この応答でしか取得できない（DBにはハッシュのみ保存）。
    * 画面で一覧・CSV出力し、各自へ配布したら破棄する。
@@ -616,6 +631,7 @@ export async function provisionMemberAccounts(input: {
     updated: 0,
     skipped: [],
     placeholders: [],
+    emailUpgraded: [],
     credentials: [],
   };
 
@@ -643,17 +659,48 @@ export async function provisionMemberAccounts(input: {
       const needPassword =
         input.issuePasswords === true && (input.resetExisting === true || !existing.passwordHash);
       const temp = needPassword ? generateTemporaryPassword() : null;
-      await prisma.account.update({
+
+      // 仮メールで作ったアカウントに、後から jinjer の会社メールが取れた場合は
+      // 実メールへ差し替える（同期前に作ったアカウントが仮メールのまま残らないように）。
+      const upgradeEmail =
+        real !== "" &&
+        existing.email !== real &&
+        isPlaceholderEmail(existing.email, existing.personId ?? m.personId);
+      if (upgradeEmail) {
+        // 差し替え先が既に別アカウントで使われている場合は触らない（重複を作らない）。
+        if (byEmail.has(real)) {
+          result.skipped.push({
+            personId: m.personId,
+            name: m.name,
+            reason: `会社メール ${real} が別のアカウントで使用中のため差し替えできません`,
+          });
+        }
+      }
+      const canUpgrade = upgradeEmail && !byEmail.has(real);
+
+      const updated = await prisma.account.update({
         where: { id: existing.id },
         data: {
           name: m.name,
           personId: m.personId,
           active: true,
+          ...(canUpgrade ? { id: real, email: real } : {}),
           ...(temp ? { passwordHash: hashPassword(temp), mustChangePassword: true } : {}),
         },
       });
+      if (canUpgrade) {
+        result.emailUpgraded.push({ personId: m.personId, name: m.name, from: existing.email, to: real });
+        byEmail.delete(existing.email);
+        byEmail.set(real, { ...existing, id: real, email: real });
+        byPersonId.set(m.personId, { ...existing, id: real, email: real });
+      }
       if (temp) {
-        result.credentials.push({ personId: m.personId, name: m.name, email: existing.email, temporaryPassword: temp });
+        result.credentials.push({
+          personId: m.personId,
+          name: m.name,
+          email: updated.email,
+          temporaryPassword: temp,
+        });
       }
       result.updated += 1;
       continue;
@@ -689,6 +736,7 @@ export async function provisionMemberAccounts(input: {
     updated: result.updated,
     skipped: result.skipped.length,
     placeholders: result.placeholders.length,
+    emailUpgraded: result.emailUpgraded.length,
     // 平文は監査ログにも残さない（件数のみ）。
     passwordsIssued: result.credentials.length,
   });
