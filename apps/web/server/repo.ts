@@ -907,6 +907,8 @@ export interface ProvisionAccountsResult {
 export async function provisionMemberAccounts(input: {
   actor: string;
   divisions?: string[];
+  /** 対象にする組織ID（事業部/グループ）。指定するとその組織と配下のメンバーだけが対象 */
+  orgUnitIds?: number[];
   role?: string;
   /** true なら jinjer にメールが無い人を仮メールで発行しない（skipped に回す） */
   requireRealEmail?: boolean;
@@ -919,7 +921,12 @@ export async function provisionMemberAccounts(input: {
   const members = await prisma.member.findMany({
     where: {
       status: "在籍",
-      ...(input.divisions && input.divisions.length > 0 ? { division: { in: input.divisions } } : {}),
+      // 組織を指定した場合は組織を優先する（事業部名より正確なため）。
+      ...(input.orgUnitIds && input.orgUnitIds.length > 0
+        ? { orgUnitId: { in: input.orgUnitIds } }
+        : input.divisions && input.divisions.length > 0
+          ? { division: { in: input.divisions } }
+          : {}),
     },
     select: { personId: true, name: true, email: true },
     orderBy: { personId: "asc" },
@@ -3216,6 +3223,27 @@ export async function targetPersonIds(): Promise<string[] | null> {
     select: { personId: true },
   });
   return members.map((m) => m.personId);
+}
+
+/** 指定した組織とその配下すべての組織ID（アカウント一括発行の対象範囲）。 */
+export async function orgUnitWithDescendants(orgUnitId: number): Promise<number[]> {
+  const units = await prisma.orgUnit.findMany({ select: { id: true, parentId: true } });
+  const childrenOf = new Map<number, number[]>();
+  for (const u of units) {
+    if (u.parentId === null) continue;
+    childrenOf.set(u.parentId, [...(childrenOf.get(u.parentId) ?? []), u.id]);
+  }
+  const out: number[] = [];
+  const stack = [orgUnitId];
+  const seen = new Set<number>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue; // 循環していても止まる
+    seen.add(id);
+    out.push(id);
+    stack.push(...(childrenOf.get(id) ?? []));
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────

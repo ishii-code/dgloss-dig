@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { handle, ok } from "@/server/http";
+import { error, handle, ok } from "@/server/http";
 import { requireAdmin } from "@/server/guard";
-import { listTargetDivisions, provisionMemberAccounts } from "@/server/repo";
+import { listTargetDivisions, orgUnitWithDescendants, provisionMemberAccounts } from "@/server/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,8 +10,13 @@ export const maxDuration = 60;
 
 const Body = z.object({
   actor: z.string().min(1).max(64),
-  /** target=評価対象事業部のみ / all=全在籍メンバー */
-  scope: z.enum(["target", "all"]).default("target"),
+  /**
+   * 対象範囲。org=指定した組織（事業部/グループ）とその配下 /
+   * target=評価対象事業部 / all=全在籍メンバー
+   */
+  scope: z.enum(["org", "target", "all"]).default("org"),
+  /** scope=org のときの対象組織（事業部またはグループ） */
+  orgUnitId: z.number().int().positive().optional(),
   role: z.enum(["USER", "ADMIN", "SUPER_ADMIN"]).default("USER"),
   /** true なら jinjer にメールが無い人は仮メールを作らずスキップする */
   requireRealEmail: z.boolean().default(false),
@@ -26,13 +31,23 @@ export const POST = (req: NextRequest) =>
   handle(async () => {
     await requireAdmin();
     const body = Body.parse(await req.json());
+
+    // 組織を指定した場合は、その組織と配下すべてのメンバーが対象。
+    let orgUnitIds: number[] | undefined;
+    if (body.scope === "org") {
+      if (!body.orgUnitId) return error(400, "組織を選択してください");
+      orgUnitIds = await orgUnitWithDescendants(body.orgUnitId);
+    }
     const divisions = body.scope === "target" ? await listTargetDivisions() : undefined;
+
     return ok({
       scope: body.scope,
+      orgUnitIds: orgUnitIds ?? null,
       divisions: divisions ?? null,
       ...(await provisionMemberAccounts({
         actor: body.actor,
         divisions,
+        orgUnitIds,
         role: body.role,
         requireRealEmail: body.requireRealEmail,
         issuePasswords: body.issuePasswords,

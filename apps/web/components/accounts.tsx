@@ -39,9 +39,21 @@ interface PickerMember {
   division: string;
 }
 
+/** 一括発行の対象に選べる組織（事業部・グループ）。 */
+interface OrgOption {
+  id: number;
+  name: string;
+  level: string;
+  path: string;
+  /** 直下の人数（配下含む） */
+  totalMembers: number;
+}
+
 interface ProvisionResult {
   scope: string;
   divisions: string[] | null;
+  /** scope=org のとき、対象になった組織ID（指定した組織＋配下） */
+  orgUnitIds?: number[] | null;
   targets: number;
   created: number;
   updated: number;
@@ -77,6 +89,9 @@ export function AccountsAdmin() {
   const [targetDivisions, setTargetDivisions] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [resetExisting, setResetExisting] = useState(false);
+  // 一括発行の対象組織（事業部またはグループ）。配下のチームまで含めて発行する。
+  const [orgOptions, setOrgOptions] = useState<OrgOption[]>([]);
+  const [provisionOrgId, setProvisionOrgId] = useState("");
 
   // 画面に表示するアカウント（既定は評価対象事業部のみ）。
   const visible = showAll
@@ -91,14 +106,17 @@ export function AccountsAdmin() {
       setSource("mock");
     }
     try {
-      const [u, m, t] = await Promise.all([
+      const [u, m, t, o] = await Promise.all([
         apiGet<Unlinked[]>("/api/accounts/unlinked"),
         apiGet<PickerMember[]>("/api/my-page/members"),
         apiGet<{ targets: string[]; all: string[] }>("/api/target-divisions"),
+        apiGet<OrgOption[]>("/api/org-units").catch(() => [] as OrgOption[]),
       ]);
       setUnlinked(u);
       setPickerMembers(m);
       setTargetDivisions(t.targets ?? []);
+      // 一括発行は「事業部全体」か「グループまで」を選ぶ。チームは選択肢に出さない。
+      setOrgOptions(o.filter((x) => x.level === "事業部" || x.level === "グループ"));
     } catch {
       /* 紐付け待ちの取得失敗は一覧表示に影響させない */
     }
@@ -135,16 +153,25 @@ export function AccountsAdmin() {
     void load();
   }, []);
 
-  // 在籍メンバーへユーザー権限のアカウントを一括発行（既存アカウントの権限は変更しない）。
-  async function provision(scope: "target" | "all") {
-    const label = scope === "target" ? "評価対象事業部" : "全在籍メンバー";
-    if (!confirm(`${label}の在籍メンバーへ「ユーザー」権限のアカウントを作成します。\n（仮パスワードは作成後に「表示中のメンバーに仮パスワードを発行」で発行します）\nよろしいですか？`)) return;
+  /**
+   * 選んだ組織（事業部またはグループ）とその配下の在籍メンバーへ、
+   * ユーザー権限のアカウントを一括発行する（既存アカウントの権限は変更しない）。
+   */
+  async function provision() {
+    const org = orgOptions.find((o) => String(o.id) === provisionOrgId);
+    if (!org) {
+      setMsg("対象の組織（事業部またはグループ）を選択してください");
+      return;
+    }
+    const label = `${org.path}（配下含む ${org.totalMembers}名）`;
+    if (!confirm(`${label} の在籍メンバーへ「ユーザー」権限のアカウントを作成します。\n（仮パスワードは作成後に「表示中のメンバーに仮パスワードを発行」で発行します）\nよろしいですか？`)) return;
     setBusy(true);
-    setMsg(`${label}のアカウントを発行中…`);
+    setMsg(`${label} のアカウントを発行中…`);
     try {
       const res = await apiSend<ProvisionResult>("/api/accounts/provision", "POST", {
         actor: ACTOR,
-        scope,
+        scope: "org",
+        orgUnitId: org.id,
         role: "USER",
         // パスワードは件数が多いとタイムアウトするため、ここでは作らない。
         // 発行は下の「表示中のメンバーに仮パスワードを発行」で分割実行する。
@@ -373,21 +400,39 @@ export function AccountsAdmin() {
             在籍メンバーへ「ユーザー」権限のアカウントを作成します。メールは jinjer の会社メールを使い、
             取得できない人は <span className="tabular">従業員ID@dgloss.co.jp</span> の仮メールで作ります（下に要修正として表示）。
             既にアカウントがある人は氏名と従業員IDの紐付けだけ更新し、<b>権限は変更しません</b>。
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="block">
+                <span className="mb-1 block text-[11px] text-ink-muted">対象の組織（配下すべてが対象）</span>
+                <select
+                  value={provisionOrgId}
+                  onChange={(e) => setProvisionOrgId(e.target.value)}
+                  disabled={busy}
+                  className="w-72 rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
+                >
+                  <option value="">選択してください</option>
+                  {orgOptions.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.path}（{o.level}・{o.totalMembers}名）
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
-                onClick={() => void provision("target")}
-                disabled={busy}
-                className="rounded-card border border-brand-primary px-3 py-1 font-semibold text-brand-primary disabled:opacity-50"
+                onClick={() => void provision()}
+                disabled={busy || !provisionOrgId}
+                className="rounded-card bg-brand-primary px-4 py-1.5 font-bold text-white disabled:opacity-50"
               >
-                評価対象事業部のメンバー
+                この組織に一括発行
               </button>
-              <button
-                onClick={() => void provision("all")}
-                disabled={busy}
-                className="rounded-card border border-surface-border px-3 py-1 font-semibold text-ink-muted disabled:opacity-50"
-              >
-                全在籍メンバー
-              </button>
+            </div>
+            {orgOptions.length === 0 && (
+              <div className="mt-2 text-semantic-warn">
+                事業部・グループが未登録です。従業員マスタの「組織設定」で先に登録してください。
+              </div>
+            )}
+            <div className="mt-2 text-[11px] text-ink-faint">
+              ※ 事業部を選ぶとその事業部全体（配下のグループ・チームを含む）、グループを選ぶとそのグループ配下が対象になります。
+              組織が未設定のメンバーはどの選択肢にも含まれないため、先に全従業員一覧で組織を設定してください。
             </div>
           </div>
         </details>
