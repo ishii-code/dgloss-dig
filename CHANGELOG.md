@@ -1,3 +1,10 @@
+# [1.38.0](https://github.com/ishii-code/dgloss-dig/compare/v1.37.0...v1.38.0) (2026-08-04)
+
+
+### Features
+
+* **accounts:** マイページの検索・絞り込み、仮パスワードの積み上げ、組織の人数ドリルダウン ([#87](https://github.com/ishii-code/dgloss-dig/issues/87)) ([9295eb6](https://github.com/ishii-code/dgloss-dig/commit/9295eb6ded0fe440859f94cb4ae2f972d4fb8593))
+
 # [1.37.0](https://github.com/ishii-code/dgloss-dig/compare/v1.36.0...v1.37.0) (2026-08-04)
 
 
