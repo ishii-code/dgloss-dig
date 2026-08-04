@@ -513,8 +513,15 @@ export function MemberMaster() {
                   <td className="whitespace-nowrap px-3 py-2 text-ink-muted">{m.personId}</td>
                   {/* 氏名は折り返さない（姓と名で2行になるのを防ぐ） */}
                   <td className="whitespace-nowrap px-3 py-2 font-medium text-ink">{m.name}</td>
+                  {/* jinjer の所属名は長いので2行で打ち切る（全文はマウスオーバーで表示）。 */}
                   <td className="px-3 py-2 text-xs text-ink-muted">
-                    {m.jinjerTeam || <span className="text-ink-faint">—</span>}
+                    {m.jinjerTeam ? (
+                      <span className="line-clamp-2 max-w-[14rem]" title={m.jinjerTeam}>
+                        {m.jinjerTeam}
+                      </span>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <select
@@ -677,7 +684,7 @@ export function MemberMaster() {
 
       {/* 組織設定（事業部 ＞ グループ ＞ チーム） */}
       <div className="mt-8">
-        <OrgSettings members={members.map((m) => ({ personId: m.personId, name: m.name }))} />
+        <OrgSettings members={members.map((m) => ({ personId: m.personId, name: m.name, orgUnitId: m.orgUnitId ?? null }))} />
       </div>
 
       {/* 役職の紐付け（jinjer の役職名 → Dig評価の役職） */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { SectionHeader } from "./ui";
 
@@ -32,6 +32,8 @@ export interface OrgUnit {
 interface PickerMember {
   personId: string;
   name: string;
+  /** 所属組織。人数のドリルダウンで使う */
+  orgUnitId?: number | null;
 }
 
 /**
@@ -47,6 +49,8 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
   const [name, setName] = useState("");
   const [level, setLevel] = useState<(typeof LEVELS)[number]>("事業部");
   const [parentId, setParentId] = useState<string>("");
+  // 所属人数をクリックしたときに、その組織の在籍者名を出す。
+  const [openMembers, setOpenMembers] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -118,6 +122,30 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
       setBusy(false);
     }
   }
+
+  /** 指定した組織とその配下すべての組織ID。 */
+  const descendantsOf = (rootId: number): Set<number> => {
+    const ids = new Set<number>([rootId]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const u of units) {
+        if (u.parentId !== null && ids.has(u.parentId) && !ids.has(u.id)) {
+          ids.add(u.id);
+          grew = true;
+        }
+      }
+    }
+    return ids;
+  };
+
+  /** 直属と、配下（子孫）だけに居るメンバーを分けて返す。 */
+  const membersOf = (unitId: number) => {
+    const ids = descendantsOf(unitId);
+    const direct = members.filter((m) => m.orgUnitId === unitId);
+    const below = members.filter((m) => m.orgUnitId != null && m.orgUnitId !== unitId && ids.has(m.orgUnitId));
+    return { direct, below };
+  };
 
   // 階層順（事業部 → その配下）に並べる。
   const ordered: OrgUnit[] = [];
@@ -219,11 +247,20 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
               </tr>
             ) : (
               ordered.map((u) => (
-                <tr key={u.id} className="border-b border-surface-border last:border-0">
+                <Fragment key={u.id}>
+                <tr className="border-b border-surface-border last:border-0">
                   <td className="px-3 py-2 font-medium text-ink">{u.name}</td>
                   <td className="px-3 py-2 text-ink-muted">{u.level}</td>
-                  <td className="px-3 py-2 text-right text-ink-muted">
-                    {u.directMembers}（{u.totalMembers}）
+                  {/* 人数をクリックすると在籍者名を下に開く。 */}
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      onClick={() => setOpenMembers(openMembers === u.id ? null : u.id)}
+                      disabled={u.totalMembers === 0}
+                      title={u.totalMembers === 0 ? "所属者がいません" : "クリックで氏名を表示"}
+                      className="text-ink-muted underline decoration-dotted underline-offset-2 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                    >
+                      {u.directMembers}（{u.totalMembers}）
+                    </button>
                   </td>
                   <td className="px-3 py-2">
                     <select
@@ -279,6 +316,34 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
                     </button>
                   </td>
                 </tr>
+                {openMembers === u.id && (
+                  <tr className="border-b border-surface-border bg-surface-panel">
+                    <td colSpan={7} className="px-3 py-2 text-xs">
+                      {(() => {
+                        const { direct, below } = membersOf(u.id);
+                        if (direct.length === 0 && below.length === 0)
+                          return <span className="text-ink-faint">所属者がいません</span>;
+                        return (
+                          <div className="space-y-1">
+                            {direct.length > 0 && (
+                              <div>
+                                <span className="mr-2 font-semibold text-ink">直属 {direct.length}名</span>
+                                <span className="text-ink-muted">{direct.map((m) => m.name).join("・")}</span>
+                              </div>
+                            )}
+                            {below.length > 0 && (
+                              <div>
+                                <span className="mr-2 font-semibold text-ink">配下 {below.length}名</span>
+                                <span className="text-ink-muted">{below.map((m) => m.name).join("・")}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))
             )}
           </tbody>

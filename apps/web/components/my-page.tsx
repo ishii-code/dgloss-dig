@@ -407,6 +407,10 @@ export function MyPage({
   );
 }
 
+/**
+ * 対象メンバーの選択。全社300名規模だとプルダウンだけでは選べないため、
+ * 事業部での絞り込みと氏名検索を添える。
+ */
 function MemberPicker({
   members,
   value,
@@ -416,16 +420,58 @@ function MemberPicker({
   value: string | null;
   onChange: (v: string) => void;
 }) {
+  const [division, setDivision] = useState("");
+  const [query, setQuery] = useState("");
+
+  const divisions = Array.from(new Set(members.map((m) => m.division).filter(Boolean))).sort();
+
+  // 「山田 太郎」と「山田太郎」のどちらでも引けるよう、空白を除いて比較する。
+  const normalize = (v: string) => v.replace(/[\s　]/g, "").toLowerCase();
+  const q = normalize(query);
+  const filtered = members.filter(
+    (m) =>
+      (!division || m.division === division) &&
+      (!q || normalize(m.name).includes(q) || normalize(m.personId).includes(q)),
+  );
+
+  // 選択中の人が絞り込みから外れても、選択が消えて見えないよう先頭に残す。
+  const selected = value ? members.find((m) => m.personId === value) : undefined;
+  const options =
+    selected && !filtered.some((m) => m.personId === selected.personId)
+      ? [selected, ...filtered]
+      : filtered;
+
   return (
     <>
       <span className="ml-2 text-ink-muted">メンバー</span>
       <select
+        value={division}
+        onChange={(e) => setDivision(e.target.value)}
+        title="事業部で絞り込む"
+        className="rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
+      >
+        <option value="">全事業部</option>
+        {divisions.map((d) => (
+          <option key={d} value={d}>
+            {d}
+          </option>
+        ))}
+      </select>
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="氏名で検索"
+        className="w-40 rounded-card border border-surface-border px-2 py-1.5 text-sm"
+      />
+      <select
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
-        className="rounded-card border border-surface-border bg-white px-3 py-1.5 font-semibold"
+        className="max-w-[18rem] rounded-card border border-surface-border bg-white px-3 py-1.5 font-semibold"
       >
-        <option value="">選択してください</option>
-        {members.map((m) => (
+        <option value="">
+          {options.length === 0 ? "該当なし" : `選択してください（${filtered.length}名）`}
+        </option>
+        {options.map((m) => (
           <option key={m.personId} value={m.personId}>
             {m.name}（{m.division}）
           </option>
