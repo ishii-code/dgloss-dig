@@ -44,6 +44,8 @@ const Body = z.union([
           positionBase: z.number().min(0).max(100_000_000).optional(),
           evaluationCycle: z.enum(["四半期", "半期"]).optional(),
           salaryGrade: z.enum(["A", "B", "C"]).optional(),
+          /** 配下の合算方法（組織の長のとき） */
+          aggregateMode: z.enum(["なし", "予算のみ", "予算と実績"]).optional(),
         }),
       )
       .max(500),

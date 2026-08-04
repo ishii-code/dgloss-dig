@@ -1262,7 +1262,7 @@ async function aggregateGroupEvaluations(yearMonth: string) {
     prisma.orgUnit.findMany(),
     prisma.member.findMany({
       where: { status: "在籍" },
-      select: { personId: true, orgUnitId: true, groupLeaderId: true },
+      select: { personId: true, orgUnitId: true, groupLeaderId: true, aggregateMode: true },
     }),
   ]);
   if (units.length > 0) {
@@ -1306,10 +1306,20 @@ async function aggregateGroupEvaluations(yearMonth: string) {
     const subs = rows.filter((r) => r.personId !== leaderId);
     if (subs.length === 0) continue;
 
+    // 合算方法は長本人の設定に従う（なし / 予算のみ / 予算と実績）。
+    const mode = allMembers.find((x) => x.personId === leaderId)?.aggregateMode ?? "予算のみ";
+    if (mode === "なし") continue;
     const monthlyBudget = rows.reduce((a, r) => a + r.monthlyBudgetDig.toNumber(), 0);
     const cumulativeBudget = rows.reduce((a, r) => a + r.cumulativeBudgetDig.toNumber(), 0);
-    const monthlyActual = rows.reduce((a, r) => a + r.monthlyActualDig.toNumber(), 0);
-    const cumulativeActual = rows.reduce((a, r) => a + r.cumulativeActualDig.toNumber(), 0);
+    // 実績は「予算と実績」を選んだときだけ配下を足す。
+    const monthlyActual =
+      mode === "予算と実績"
+        ? rows.reduce((a, r) => a + r.monthlyActualDig.toNumber(), 0)
+        : own.monthlyActualDig.toNumber();
+    const cumulativeActual =
+      mode === "予算と実績"
+        ? rows.reduce((a, r) => a + r.cumulativeActualDig.toNumber(), 0)
+        : own.cumulativeActualDig.toNumber();
     const mRate = achievementRate(monthlyActual, monthlyBudget);
     const cRate = achievementRate(cumulativeActual, cumulativeBudget);
     await prisma.monthlyEvaluation.update({
@@ -1336,6 +1346,7 @@ async function aggregateGroupEvaluations(yearMonth: string) {
 // Dig申請（成果Digの申請・承認）
 // ─────────────────────────────────────────────
 import type { CalcRule as DbCalcRule } from "@prisma/client";
+import { fetchMonthlyWorkHours } from "./jinjer";
 import {
   findContractMasterByCustomer,
   isContractDbConfigured,
@@ -1941,6 +1952,8 @@ export async function generateEvaluations(
 
   // 対象月に計上される承認済借入（入社時の初回借入を含む）を実績Digへ反映する。
   const loanMap = await loanDigMapFor(yearMonth);
+  // アルバイトの予算Digは「実労働時間 × 時給」を役職ベース相当として算定する。
+  const hoursMap = await workHoursMapFor(yearMonth);
   // 予算Digの月別上書き（運用指定があれば計算値より優先）。
   const overrides = new Map(
     (await prisma.budgetOverride.findMany({ where: { yearMonth } })).map((o) => [
@@ -1994,7 +2007,14 @@ export async function generateEvaluations(
         yearMonth,
         personId: m.personId,
         employmentType: m.employmentType as EmploymentType,
-        positionBase: m.positionBase.toNumber(),
+        positionBase: baseAmountForBudget(
+          {
+            employmentType: m.employmentType as string,
+            positionBase: m.positionBase.toNumber(),
+            hourlyWage: m.hourlyWage ? m.hourlyWage.toNumber() : null,
+          },
+          hoursMap.get(m.personId),
+        ),
         joinedOn: m.joinedOn.toISOString().slice(0, 10),
         leftOn: m.leftOn ? m.leftOn.toISOString().slice(0, 10) : null,
         evaluationCycle: m.evaluationCycle as EvaluationCycle,
@@ -2512,6 +2532,57 @@ export async function enrichMembersPage(
 }
 
 
+
+// ─────────────────────────────────────────────
+// 実労働時間（アルバイトの予算Dig算定）
+// ─────────────────────────────────────────────
+/** 対象月の実労働時間を jinjer から取り込む。 */
+export async function syncWorkHours(yearMonth: string, actor: string) {
+  const rows = await fetchMonthlyWorkHours(yearMonth);
+  if (rows.length === 0) {
+    return { fetched: 0, updated: 0, matched: 0, note: "勤怠の実績を取得できませんでした" };
+  }
+  // 自社の在籍メンバーのみ保存する（jinjer 側は退職者も含むため）。
+  const members = await prisma.member.findMany({
+    where: { status: "在籍" },
+    select: { personId: true },
+  });
+  const known = new Set(members.map((m) => m.personId));
+  let updated = 0;
+  for (const r of rows) {
+    if (!known.has(r.personId)) continue;
+    await prisma.workHours.upsert({
+      where: { yearMonth_personId: { yearMonth, personId: r.personId } },
+      update: { hours: r.hours },
+      create: { yearMonth, personId: r.personId, hours: r.hours },
+    });
+    updated += 1;
+  }
+  await audit(actor, "workhours.sync", "WorkHours", yearMonth, { fetched: rows.length, updated });
+  return { fetched: rows.length, updated, matched: updated, note: null as string | null };
+}
+
+/** 対象月の実労働時間（personId → 時間）。 */
+async function workHoursMapFor(yearMonth: string): Promise<Map<string, number>> {
+  const rows = await prisma.workHours.findMany({ where: { yearMonth } });
+  return new Map(rows.map((r) => [r.personId, r.hours.toNumber()]));
+}
+
+/**
+ * 予算Digの算定に使う「役職ベース相当額」。
+ * アルバイトは その月の実労働時間 × 時給（社員と同じ係数を後段で掛ける）。
+ * 実労働時間が取れない月は登録済みの役職ベースにフォールバックする。
+ */
+export function baseAmountForBudget(
+  m: { employmentType: string; positionBase: number; hourlyWage: number | null },
+  workHours: number | undefined,
+): number {
+  if (m.employmentType === "アルバイト" && m.hourlyWage && m.hourlyWage > 0 && workHours && workHours > 0) {
+    return Math.round(workHours * m.hourlyWage);
+  }
+  return m.positionBase;
+}
+
 // ─────────────────────────────────────────────
 // 組織（事業部 > グループ > チーム）
 // ─────────────────────────────────────────────
@@ -3004,6 +3075,7 @@ export async function bulkUpdatePositionBase(
     positionBase?: number;
     evaluationCycle?: string;
     salaryGrade?: string;
+    aggregateMode?: string;
   }>,
   actor: string,
 ) {
@@ -3017,6 +3089,7 @@ export async function bulkUpdatePositionBase(
       data.positionManual = true;
     }
     if (r.evaluationCycle) data.evaluationCycle = r.evaluationCycle as Prisma.MemberUpdateInput["evaluationCycle"];
+    if (r.aggregateMode) data.aggregateMode = r.aggregateMode;
     if (r.salaryGrade) data.salaryGrade = r.salaryGrade;
 
     // レンジが決まっていれば給与レンジ表の金額を役職ベースにする（手入力より優先）。
