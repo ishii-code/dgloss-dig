@@ -869,3 +869,173 @@ export async function probeJinjerOrg(): Promise<{
 
   return { connected: jinjerConnected, results };
 }
+
+// ─────────────────────────────────────────────
+// 打刻実績（アルバイトの予算Dig算定に使う実労働時間）
+// ─────────────────────────────────────────────
+/**
+ * 勤怠のエンドポイント候補。jinjer の版により名称が異なるため順に試す。
+ * 実際にどれが使えるかは probeAttendance() で確認する。
+ */
+const ATTENDANCE_PATHS = [
+  "/v1/attendances",
+  "/v1/daily_attendances",
+  "/v1/monthly_attendances",
+  "/v1/attendance_summaries",
+  "/v1/work_records",
+  "/v1/timecards",
+];
+
+/** 労働時間らしい項目の候補（分・時間の両方を想定）。 */
+const WORK_MINUTE_KEYS = [
+  "total_working_minutes",
+  "working_minutes",
+  "actual_working_minutes",
+  "work_minutes",
+  "labor_minutes",
+];
+const WORK_HOUR_KEYS = [
+  "total_working_hours",
+  "working_hours",
+  "actual_working_hours",
+  "work_hours",
+  "labor_hours",
+];
+
+export interface AttendanceProbeResult {
+  connected: boolean;
+  /** 応答があったエンドポイントごとの状況 */
+  endpoints: Array<{
+    path: string;
+    status: number;
+    ok: boolean;
+    /** 一覧として取り出せた件数 */
+    rows: number;
+    /** 先頭レコードの項目名（マッピングの手がかり） */
+    keys: string[];
+    /** 労働時間らしい項目と値の例 */
+    workFields: Array<{ key: string; sample: string }>;
+    error?: string;
+  }>;
+}
+
+/**
+ * 打刻実績のエンドポイントを実データで探索する診断。
+ * どのパス・どの項目名で労働時間が取れるかを確認してから取り込みを有効にする。
+ */
+export async function probeAttendance(yearMonth: string): Promise<AttendanceProbeResult> {
+  if (!jinjerConnected) return { connected: false, endpoints: [] };
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const [y, m] = yearMonth.split("-");
+  const last = new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+  // 期間指定のパラメータ名も版により異なるため、代表的な組み合わせを試す。
+  const queries = [
+    `year_month=${yearMonth}`,
+    `target_month=${yearMonth}`,
+    `from=${yearMonth}-01&to=${yearMonth}-${String(last).padStart(2, "0")}`,
+    "",
+  ];
+
+  const endpoints: AttendanceProbeResult["endpoints"] = [];
+  for (const path of ATTENDANCE_PATHS) {
+    for (const q of queries) {
+      const url = `${JINJER_BASE}${path}?${q}${q ? "&" : ""}page=1`;
+      const r = await fetchJson(url, headers, 1);
+      if (!r.ok && r.status === 404) continue; // 存在しないパスは次へ
+      const list = r.json === null ? [] : extractList(r.json);
+      const head = list[0] ?? {};
+      const workFields: Array<{ key: string; sample: string }> = [];
+      for (const [k, v] of Object.entries(head)) {
+        if (v === null || v === undefined || typeof v === "object") continue;
+        if (/minute|hour|time|労働|勤務/i.test(k)) {
+          workFields.push({ key: k, sample: String(v).slice(0, 40) });
+        }
+      }
+      endpoints.push({
+        path: `${path}${q ? `?${q}` : ""}`,
+        status: r.status,
+        ok: r.ok,
+        rows: list.length,
+        keys: Object.keys(head).slice(0, 40),
+        workFields,
+        error: r.json === null ? r.text.slice(0, 120) : undefined,
+      });
+      if (list.length > 0) break; // このパスで取れたら次のパスへ
+    }
+  }
+  return { connected: true, endpoints };
+}
+
+/** 1レコードから労働時間（時間）を取り出す。分の項目しか無ければ60で割る。 */
+function workHoursOf(rec: Record<string, unknown>): number {
+  for (const k of WORK_HOUR_KEYS) {
+    const v = Number(rec[k]);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  for (const k of WORK_MINUTE_KEYS) {
+    const v = Number(rec[k]);
+    if (Number.isFinite(v) && v > 0) return v / 60;
+  }
+  // "8:30" のような表記にも対応する。
+  for (const k of [...WORK_HOUR_KEYS, ...WORK_MINUTE_KEYS, "total_working_time", "working_time"]) {
+    const raw = rec[k];
+    if (typeof raw === "string" && /^\d+:\d{2}$/.test(raw)) {
+      const [h, mi] = raw.split(":").map(Number);
+      return h + mi / 60;
+    }
+  }
+  return 0;
+}
+
+export interface WorkHoursRow {
+  personId: string;
+  hours: number;
+}
+
+/**
+ * 対象月の実労働時間を従業員ごとに集計する。
+ * 日次レコードなら合算、月次サマリならそのまま採用する。
+ * 取得できない場合は空配列（呼び出し側で従来動作にフォールバック）。
+ */
+export async function fetchMonthlyWorkHours(yearMonth: string): Promise<WorkHoursRow[]> {
+  if (!jinjerConnected) return [];
+  const token = await getToken();
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const [y, m] = yearMonth.split("-");
+  const last = new Date(Date.UTC(Number(y), Number(m), 0)).getUTCDate();
+  const queries = [
+    `year_month=${yearMonth}`,
+    `target_month=${yearMonth}`,
+    `from=${yearMonth}-01&to=${yearMonth}-${String(last).padStart(2, "0")}`,
+  ];
+
+  for (const path of ATTENDANCE_PATHS) {
+    for (const q of queries) {
+      const totals = new Map<string, number>();
+      let any = false;
+      // ページを進めながら集計（重複IDの再出現で終端とみなす）。
+      for (let page = 1; page <= 40; page++) {
+        const r = await fetchJson(`${JINJER_BASE}${path}?${q}&page=${page}`, headers, 2);
+        if (!r.ok || r.json === null) break;
+        const list = extractList(r.json);
+        if (list.length === 0) break;
+        any = true;
+        for (const rec of list) {
+          const personId = pick(rec, "employee_id", "employee_code", "id", "emp_code");
+          if (!personId) continue;
+          // 月次サマリ形式（1人1レコード）と日次形式（1人複数レコード）の両方に対応。
+          const hours = workHoursOf(rec);
+          if (hours > 0) totals.set(personId, (totals.get(personId) ?? 0) + hours);
+        }
+      }
+      if (any && totals.size > 0) {
+        return [...totals.entries()].map(([personId, hours]) => ({
+          personId,
+          hours: Math.round(hours * 100) / 100,
+        }));
+      }
+    }
+  }
+  return [];
+}

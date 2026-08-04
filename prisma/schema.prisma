@@ -209,6 +209,19 @@ model PositionRule {
   updatedAt DateTime @updatedAt
 }
 
+/// 月次の実労働時間（jinjer の打刻実績）。アルバイトの予算Dig算定に使う
+model WorkHours {
+  yearMonth String // YYYY-MM
+  personId  String
+  /// その月の実労働時間（時間）
+  hours     Decimal  @db.Decimal(8, 2)
+  source    String   @default("jinjer")
+  updatedAt DateTime @updatedAt
+
+  @@id([yearMonth, personId])
+  @@index([yearMonth])
+}
+
 /// 設定マスタ（要件 F-1）。対象年月ごとに1レコード（履歴保持）。
 model Setting {
   yearMonth            String   @id // YYYY-MM
@@ -310,6 +323,8 @@ model Member {
   positionManual  Boolean         @default(false)
   /// 役職ベースを一覧で手入力した。true ならレンジ自動判定で上書きしない
   positionBaseManual Boolean      @default(false)
+  /// 配下（組織の長のとき）の合算方法。なし / 予算のみ / 予算と実績
+  aggregateMode   String          @default("予算のみ")
   /// 個別に指定した事業部。設定時は同期・ルール適用より優先される
   divisionOverride String?
   /// 給与テーブルの等級（A〜G）。役職ベースの算定元

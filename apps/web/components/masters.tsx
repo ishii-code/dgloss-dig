@@ -9,6 +9,8 @@ import { PositionMapping } from "./position-mapping";
 
 const ACTOR = "B0000071";
 const YM = "2026-01";
+/** 実労働時間の取込で既定表示する対象月（当月）。 */
+const ymNow = () => new Date().toISOString().slice(0, 7);
 const POSITIONS = ["部長", "マネージャー", "リーダー", "メンバー"];
 const JOBS = ["FS", "IS", "CS"];
 const EMP = ["正社員", "アルバイト"];
@@ -30,6 +32,8 @@ interface Member {
   salaryGrade?: string | null;
   /** 役職ベースを手入力したか（レンジ自動判定で上書きしない） */
   positionBaseManual?: boolean;
+  /** 配下の合算方法（組織の長のとき）: なし / 予算のみ / 予算と実績 */
+  aggregateMode?: string;
   position: string;
   jobType: string | null;
   employmentType: string;
@@ -118,6 +122,49 @@ export function MemberMaster() {
       setMsg(`組織を設定できませんでした: ${(e as Error).message}`);
     } finally {
       setSavingId(null);
+    }
+  }
+
+  /** 対象月の実労働時間を jinjer の打刻実績から取り込む（アルバイトの予算Dig算定用）。 */
+  async function syncHours() {
+    const ym = prompt("実労働時間を取り込む対象月を入力してください（YYYY-MM）", ymNow());
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return;
+    setSyncing(true);
+    setMsg(`⏳ ${ym} の実労働時間を取込中…`);
+    try {
+      const r = await apiSend<{ fetched: number; updated: number; note: string | null }>(
+        "/api/members/work-hours",
+        "POST",
+        { yearMonth: ym, actor: ACTOR },
+      );
+      if (r.note) {
+        // どのエンドポイントで取れるか分からない場合は診断結果を見せる。
+        const p = await apiSend<{
+          connected: boolean;
+          endpoints: Array<{ path: string; status: number; rows: number; keys: string[]; workFields: Array<{ key: string; sample: string }> }>;
+        }>("/api/members/jinjer-attendance-probe", "POST", { yearMonth: ym });
+        const lines = p.endpoints.map(
+          (e) =>
+            `・${e.path} → HTTP ${e.status} / ${e.rows}件` +
+            (e.workFields.length > 0 ? `\n　　労働時間らしい項目: ${e.workFields.map((w) => `${w.key}=${w.sample}`).join(", ")}` : "") +
+            (e.rows > 0 && e.workFields.length === 0 ? `\n　　項目名: ${e.keys.slice(0, 15).join(", ")}` : ""),
+        );
+        setMsg(
+          `${ym} の実労働時間は取得できませんでした。\n【勤怠エンドポイントの探索結果】\n` +
+            (lines.length > 0 ? lines.join("\n") : "応答したエンドポイントがありません") +
+            `\n※ この結果を共有いただければ、正しい項目名で取り込めるようにします。`,
+        );
+        return;
+      }
+      setMsg(
+        `${ym} の実労働時間を取り込みました: ${r.updated}名（取得${r.fetched}件）\n` +
+          `アルバイトの予算Digに反映するには「評価台帳を再計算」を実行してください。`,
+      );
+      await load();
+    } catch (e) {
+      setMsg(`実労働時間の取込に失敗しました: ${(e as Error).message}`);
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -388,6 +435,9 @@ export function MemberMaster() {
         <button onClick={probeMailFields} disabled={syncing} className="rounded-card border border-surface-border px-3 py-1.5 text-sm font-semibold text-ink-muted disabled:opacity-60">
           メール項目を確認
         </button>
+        <button onClick={syncHours} disabled={syncing} className="rounded-card border border-brand-accent px-3 py-1.5 text-sm font-semibold text-brand-accent disabled:opacity-60">
+          実労働時間を取込（アルバイトの予算Dig）
+        </button>
         <button onClick={autoRanges} disabled={syncing} className="rounded-card border border-brand-accent px-3 py-1.5 text-sm font-semibold text-brand-accent disabled:opacity-60">
           レンジを自動判定（役職ベース設定）
         </button>
@@ -421,6 +471,7 @@ export function MemberMaster() {
               <th className="px-3 py-2 font-semibold">レンジ</th>
               <th className="px-3 py-2 text-right font-semibold">役職ベース</th>
               <th className="px-3 py-2 font-semibold">サイクル</th>
+              <th className="px-3 py-2 font-semibold">配下の合算</th>
               <th className="px-3 py-2 text-center font-semibold">操作</th>
             </tr>
           </thead>
@@ -527,6 +578,19 @@ export function MemberMaster() {
                       ))}
                     </select>
                   </td>
+                  <td className="px-3 py-2">
+                    <select
+                      value={m.aggregateMode ?? "予算のみ"}
+                      disabled={savingId === m.personId}
+                      onChange={(e) => void saveRow(m.personId, { aggregateMode: e.target.value })}
+                      title="組織設定でこの人を「長」にしたとき、配下の何を合算するか"
+                      className="rounded-card border border-surface-border bg-white px-2 py-1 text-xs"
+                    >
+                      <option>なし</option>
+                      <option>予算のみ</option>
+                      <option>予算と実績</option>
+                    </select>
+                  </td>
                   <td className="px-3 py-2 text-center">
                     <button onClick={() => setEditing(m)} className="mr-2 text-xs font-semibold text-brand-primary">
                       編集
@@ -543,6 +607,8 @@ export function MemberMaster() {
         <div className="px-3 py-2 text-[11px] text-ink-faint">
           ※ 組織・役職・レンジ・役職ベース・サイクルはその場で保存されます。
           レンジを選ぶと給与レンジ表の金額が役職ベースに入り、金額を直接入力すると「手入力」となり自動判定で上書きされません。
+          「配下の合算」は、組織設定でその人を「長」にしたときに配下の何を合算するかの設定です（部長・グループ長・チーム長を個別に指定できます）。
+          アルバイトの予算Digは「実労働時間 × 時給」で算定します（下の「実労働時間を取込」を実行した月のみ。未取得の月は役職ベースを使用）。
           変更後は予実モニターで「評価台帳を再計算」してください。
         </div>
       </div>
