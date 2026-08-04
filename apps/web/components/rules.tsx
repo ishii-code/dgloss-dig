@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { man, yen } from "@/lib/format";
+import { ChurnAlerts } from "./churn-alerts";
+import { DivisionSettings } from "./division-settings";
 import { SectionHeader } from "./ui";
 
 const ACTOR = "B0000071";
@@ -58,6 +60,8 @@ export function RulesAndContracts() {
   const [form, setForm] = useState<Rule>(emptyRule);
   const [msg, setMsg] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
+  // 事業部フィルタ（空 = 全事業部）。ルール一覧・契約一覧の両方に効かせる。
+  const [divisionFilter, setDivisionFilter] = useState("");
 
   async function load() {
     try {
@@ -167,13 +171,42 @@ export function RulesAndContracts() {
     }
   }
 
+  // 事業部の選択肢はルールと契約の両方から集める。
+  const divisions = Array.from(
+    new Set([...rules.map((r) => r.division), ...contracts.map((c) => c.division)]),
+  ).sort();
+  const matchesDivision = (d: string) => !divisionFilter || d === divisionFilter;
+  const visibleRules = rules.filter((r) => matchesDivision(r.division));
+  const visibleContracts = contracts.filter((c) => matchesDivision(c.division));
+
   return (
     <>
+      {/* 事業部別の予算指標・昇降級しきい値（旧「設定」タブから集約） */}
+      <DivisionSettings />
+
+      {/* 途中解約アラート（マイナスDigを確定するまで残る） */}
+      <ChurnAlerts />
+
       <SectionHeader
         title="Dig獲得ルール（事業部別）"
         note="1契約でどういう契約内容だと何Dig付与するかを定義（要件 F-3）"
         accent="accent"
       />
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-xs text-ink-muted">事業部で絞り込む</span>
+        <select
+          value={divisionFilter}
+          onChange={(e) => setDivisionFilter(e.target.value)}
+          className="rounded-card border border-surface-border bg-white px-2 py-1 text-sm"
+        >
+          <option value="">全事業部</option>
+          {divisions.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </select>
+      </div>
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">
           DB未接続のためモック表示です（`pnpm db:seed` と DATABASE_URL 設定が必要）。
@@ -198,7 +231,7 @@ export function RulesAndContracts() {
             </tr>
           </thead>
           <tbody className="tabular">
-            {rules.map((r) => (
+            {visibleRules.map((r) => (
               <tr key={r.id} className="border-b border-surface-border last:border-0">
                 <td className="px-3 py-2 text-ink-muted">{r.id}</td>
                 <td className="px-3 py-2">{r.division}</td>
@@ -264,14 +297,14 @@ export function RulesAndContracts() {
         <button onClick={reflect} className="rounded-card bg-brand-accent px-4 py-1.5 text-sm font-bold text-white">
           ③この月の契約を成果Digに反映
         </button>
-        <span className="text-xs text-ink-muted">{contracts.length}件の契約</span>
+        <span className="text-xs text-ink-muted">{visibleContracts.length}件の契約</span>
       </div>
       <div className="mb-3 text-[11px] text-ink-faint">
         ※ 契約管理DB（keiyaku-kanri-next の VIEW cg_customer_master）は読み取り専用で参照します（SELECTのみ・書き込みなし）。
         CG-CRM と同じ `CONTRACT_DB_URL` を使用し、未設定の場合は同期をスキップします。
       </div>
       <div className="space-y-3">
-        {contracts.map((c) => (
+        {visibleContracts.map((c) => (
           <ContractCard key={c.contractId} row={c} nameOf={nameOf} members={members} onSave={saveShares} />
         ))}
       </div>

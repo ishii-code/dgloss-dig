@@ -640,3 +640,86 @@ export function cgSplit(totalDig: number, salesPercent: number): { cg: number; s
   const sales = Math.floor((totalDig * pct) / 100);
   return { cg: totalDig - sales, sales };
 }
+
+// ── 事業部別の Dig予算設定（組織ツリーで継承） ──
+/**
+ * 組織ごとに上書きできる Dig予算設定。null は「上位組織を継承」を意味する。
+ * 事業部に設定するのが基本だが、グループ／チームでも上書きできる。
+ */
+export interface OrgSettingOverride {
+  budgetCoefficient: number | null;
+  insuranceCoefficient: number | null;
+  commonCostFulltime: number | null;
+  commonCostParttime: number | null;
+  promotionUpTwo: number | null;
+  promotionUpOne: number | null;
+  promotionDownOne: number | null;
+  promotionDownTwo: number | null;
+}
+
+export const ORG_SETTING_KEYS = [
+  "budgetCoefficient",
+  "insuranceCoefficient",
+  "commonCostFulltime",
+  "commonCostParttime",
+  "promotionUpTwo",
+  "promotionUpOne",
+  "promotionDownOne",
+  "promotionDownTwo",
+] as const satisfies readonly (keyof OrgSettingOverride)[];
+
+/** 上書きなし（全項目が上位継承）。 */
+export const EMPTY_ORG_OVERRIDE: OrgSettingOverride = {
+  budgetCoefficient: null,
+  insuranceCoefficient: null,
+  commonCostFulltime: null,
+  commonCostParttime: null,
+  promotionUpTwo: null,
+  promotionUpOne: null,
+  promotionDownOne: null,
+  promotionDownTwo: null,
+};
+
+/** 組織ツリーのノード（継承をたどるのに必要な最小限）。 */
+export interface OrgSettingNode extends OrgSettingOverride {
+  id: number;
+  parentId: number | null;
+}
+
+/**
+ * 自分 → 祖先 の順にたどり、項目ごとに最初に見つかった値を採用して1つの上書きにまとめる。
+ * 循環参照があっても止まる（訪問済みは打ち切り）。
+ */
+export function inheritedOverride(
+  id: number | null,
+  byId: Map<number, OrgSettingNode>,
+): OrgSettingOverride {
+  const out = { ...EMPTY_ORG_OVERRIDE };
+  let cur = id === null ? undefined : byId.get(id);
+  const seen = new Set<number>();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    for (const k of ORG_SETTING_KEYS) {
+      if (out[k] === null && cur[k] !== null) out[k] = cur[k];
+    }
+    cur = cur.parentId === null ? undefined : byId.get(cur.parentId);
+  }
+  return out;
+}
+
+/** 全社設定に事業部別の上書きを重ねた Setting を返す（未設定の項目は全社設定のまま）。 */
+export function mergeSetting(base: Setting, ov: OrgSettingOverride): Setting {
+  return {
+    ...base,
+    budgetCoefficient: ov.budgetCoefficient ?? base.budgetCoefficient,
+    insuranceCoefficient: ov.insuranceCoefficient ?? base.insuranceCoefficient,
+    commonCostFulltime: ov.commonCostFulltime ?? base.commonCostFulltime,
+    commonCostParttime: ov.commonCostParttime ?? base.commonCostParttime,
+    promotion: {
+      upTwo: ov.promotionUpTwo ?? base.promotion.upTwo,
+      upOne: ov.promotionUpOne ?? base.promotion.upOne,
+      downOne: ov.promotionDownOne ?? base.promotion.downOne,
+      downTwo: ov.promotionDownTwo ?? base.promotion.downTwo,
+    },
+  };
+}

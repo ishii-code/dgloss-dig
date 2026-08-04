@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DEFAULT_SETTING } from "@dig/contracts";
 import { man, yen } from "@/lib/format";
 import { apiGet } from "@/lib/api";
 import {
@@ -258,45 +257,6 @@ export function ReleaseNotes() {
             </ul>
           </div>
         ))}
-      </div>
-    </>
-  );
-}
-
-// ── 設定マスタ（F-1・表示） ──
-export function SettingsView() {
-  const s = DEFAULT_SETTING;
-  const rows: { label: string; value: string; note?: string }[] = [
-    { label: "予算係数", value: `× ${s.budgetCoefficient}`, note: "予算Dig = 総コスト × 係数" },
-    { label: "社会保険係数", value: `× ${s.insuranceCoefficient}`, note: "社会保険・交通費込み" },
-    { label: "累計予算Dig係数", value: "四半期 ×3 / 半期 ×6", note: "v1.1で是正" },
-    { label: "会社金利（年利）", value: `${s.annualRatePct}%`, note: "ディグロス金融で変更可" },
-    { label: "初回借入 既定額", value: yen(s.initialLoanDefault), note: "入社時の必須借入" },
-    { label: "借入 既定返済期間", value: `${s.loanTermMonthsDefault}ヶ月`, note: "" },
-    { label: "正社員 共通費（座席代）", value: `${yen(s.commonCostFulltime)}/月`, note: "" },
-    { label: "アルバイト 共通費", value: `${yen(s.commonCostParttime)}/月`, note: "" },
-    { label: "昇降級しきい値", value: "120%↑昇2 / 100%↑昇1 / 80%↓降1 / 60%↓降2", note: "達成率で判定" },
-    {
-      label: "インセンティブ率",
-      value: "超過分 × 20%",
-      note: "原資は予算超過分のみ（ボーナスDig・借入Digは含めない）。CGは5%",
-    },
-  ];
-  return (
-    <>
-      <SectionHeader title="設定マスタ" note="全社の設定値（要件 F-1）。編集・履歴保持は P4（Supabase）で実装。" />
-      <div className="overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
-        <table className="w-full text-sm">
-          <tbody className="tabular">
-            {rows.map((r) => (
-              <tr key={r.label} className="border-b border-surface-border last:border-0">
-                <td className="w-56 px-4 py-3 font-medium text-ink">{r.label}</td>
-                <td className="px-4 py-3 font-semibold text-ink">{r.value}</td>
-                <td className="px-4 py-3 text-xs text-ink-muted">{r.note}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </>
   );

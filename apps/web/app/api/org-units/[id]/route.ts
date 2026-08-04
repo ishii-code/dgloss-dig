@@ -16,6 +16,20 @@ const Body = z.object({
   active: z.boolean().optional(),
   /** インセンティブ還元率(%)。null で解除（上位組織→既定20%に従う） */
   incentiveRatePct: z.number().int().min(0).max(100).nullable().optional(),
+  // 事業部別の Dig予算設定。いずれも null を渡すと「上位を継承」に戻る。
+  /** 予算係数（予算Dig = 総コスト × 係数） */
+  budgetCoefficient: z.number().min(0).max(100).nullable().optional(),
+  /** 社会保険係数 */
+  insuranceCoefficient: z.number().min(0).max(10).nullable().optional(),
+  /** 座席代（正社員・月額） */
+  commonCostFulltime: z.number().min(0).max(100_000_000).nullable().optional(),
+  /** 座席代（アルバイト・月額） */
+  commonCostParttime: z.number().min(0).max(100_000_000).nullable().optional(),
+  /** 昇降級しきい値（達成率）。1.2 = 120% */
+  promotionUpTwo: z.number().min(0).max(100).nullable().optional(),
+  promotionUpOne: z.number().min(0).max(100).nullable().optional(),
+  promotionDownOne: z.number().min(0).max(100).nullable().optional(),
+  promotionDownTwo: z.number().min(0).max(100).nullable().optional(),
   actor: z.string().min(1).max(64),
 });
 
