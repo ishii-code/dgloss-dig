@@ -1,3 +1,10 @@
+## [1.39.2](https://github.com/ishii-code/dgloss-dig/compare/v1.39.1...v1.39.2) (2026-08-06)
+
+
+### Bug Fixes
+
+* **rules:** 事業部プルダウンを組織とルールの和集合にし、名前の不一致を可視化 ([#91](https://github.com/ishii-code/dgloss-dig/issues/91)) ([ab5efbb](https://github.com/ishii-code/dgloss-dig/commit/ab5efbb0cc5618d481af2c66981fdf20e2260076))
+
 ## [1.39.1](https://github.com/ishii-code/dgloss-dig/compare/v1.39.0...v1.39.1) (2026-08-06)
 
 
