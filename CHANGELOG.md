@@ -1,3 +1,16 @@
+# [1.40.0](https://github.com/ishii-code/dgloss-dig/compare/v1.39.2...v1.40.0) (2026-08-06)
+
+
+### Bug Fixes
+
+* **rules:** 事業部名の不一致警告を本当に噛み合わないケースだけに絞る ([#94](https://github.com/ishii-code/dgloss-dig/issues/94)) ([3bff1e3](https://github.com/ishii-code/dgloss-dig/commit/3bff1e33963284f9001b9bd48252194d72c6ace8))
+
+
+### Features
+
+* **cg:** インセン還元率5%を設定し、事業部名を「カスタマーグロース部」に統一 ([#92](https://github.com/ishii-code/dgloss-dig/issues/92)) ([aedc20a](https://github.com/ishii-code/dgloss-dig/commit/aedc20a902b56b01f89f7253ed361390106719e4))
+* **rules:** AIテレアポの成果Digに契約期間と初期費用を反映 ([#93](https://github.com/ishii-code/dgloss-dig/issues/93)) ([24f6b64](https://github.com/ishii-code/dgloss-dig/commit/24f6b647631ab7ac4c18d18d222c4ca6e23f1f20))
+
 ## [1.39.2](https://github.com/ishii-code/dgloss-dig/compare/v1.39.1...v1.39.2) (2026-08-06)
 
 
