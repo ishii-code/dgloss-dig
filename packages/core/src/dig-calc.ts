@@ -315,6 +315,9 @@ export function computeQuarterBalance(args: {
 }
 
 // ── Dig獲得ルール適用（要件 F-3・keiyaku連携） ──
+/** コール単価の基準数量。「1万コールあたり◯Dig」で単価を持つ。 */
+export const CALL_UNIT = 10_000;
+
 /** 千円単位切り捨て */
 function floorThousand(v: number): number {
   return Math.floor(v / 1000) * 1000;
@@ -335,7 +338,12 @@ export function computeContractDig(contract: Contract, rule: CalcRule): number {
       const call = contract.lineItems
         .filter((li) => li.key === "call")
         .reduce((s, li) => s + li.qty, 0);
-      return line * rule.unitLine + call * rule.unitCall;
+      // 単価は「1回線あたり」「1万コールあたり」の月額。契約期間を掛けて総額にする。
+      // コールは万コール未満も按分する（35,000コール → 3.5万コール分）。
+      const monthly = line * rule.unitLine + (call / CALL_UNIT) * rule.unitCall;
+      const months = Math.max(0, contract.termMonths);
+      // 初期費用は 1円 = 1Dig（千円未満切捨）で加算する。
+      return Math.round(monthly * months) + floorThousand(contract.initialFee);
     }
     case "初回発注1to1":
       return floorThousand(contract.initialFee);
