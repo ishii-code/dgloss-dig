@@ -148,14 +148,21 @@ interface ContractRow {
   perPerson: { personId: string; dig: number }[];
 }
 
+/**
+ * 新規登録フォームの初期値。特定事業部の実ルールを埋めない（中立）。
+ * 事業部は画面上部で選んでいるものを既定にする。
+ */
+/** 選択中の事業部を既定にした、まっさらな新規ルール。 */
+const newRuleFor = (division: string): Rule => ({ ...emptyRule, division });
+
 const emptyRule: Rule = {
   id: "",
-  division: "AIテレアポ事業部",
+  division: "",
   name: "",
   ruleType: "回線コール単価",
   modelKeyFilter: "",
-  unitLine: 50000,
-  unitCall: 50000,
+  unitLine: 0,
+  unitCall: 0,
   ratioPercent: 0,
   fixedDig: 0,
   marginRatePct: 50,
@@ -196,11 +203,17 @@ export function RulesAndContracts() {
     void load();
   }, []);
 
+  // 上部で事業部を選んだら、新規登録フォームの事業部もそれに合わせる。
+  // 既存ルールを読み込み中（id 入力済み）のときは触らない。
+  useEffect(() => {
+    setForm((f) => (f.id === "" ? { ...f, division: divisionFilter } : f));
+  }, [divisionFilter]);
+
   const nameOf = (id: string) => members.find((m) => m.personId === id)?.name ?? id;
 
   async function saveRule() {
-    if (!form.id || !form.name) {
-      setMsg("ID と 名称 は必須です");
+    if (!form.id || !form.name || !form.division) {
+      setMsg("ID・名称・事業部 は必須です");
       return;
     }
     try {
@@ -210,7 +223,7 @@ export function RulesAndContracts() {
         actor: ACTOR,
       });
       setMsg(`ルール ${form.id} を保存しました`);
-      setForm(emptyRule);
+      setForm(newRuleFor(divisionFilter));
       await load();
     } catch (e) {
       setMsg(`保存失敗: ${(e as Error).message}`);
@@ -289,6 +302,8 @@ export function RulesAndContracts() {
   const divisions = Array.from(
     new Set([...rules.map((r) => r.division), ...contracts.map((c) => c.division)]),
   ).sort();
+  // 一覧に同じIDがあれば「編集中」。無ければ新規登録。
+  const editingExisting = form.id !== "" && rules.some((r) => r.id === form.id);
   const matchesDivision = (d: string) => !divisionFilter || d === divisionFilter;
   const visibleRules = rules.filter((r) => matchesDivision(r.division));
 
@@ -378,6 +393,7 @@ export function RulesAndContracts() {
               <th className="px-3 py-2 font-semibold">課金形態</th>
               <th className="px-3 py-2 text-right font-semibold">パラメータ</th>
               <th className="px-3 py-2 text-center font-semibold">有効</th>
+              <th className="px-3 py-2 text-center font-semibold">操作</th>
             </tr>
           </thead>
           <tbody className="tabular">
@@ -404,6 +420,18 @@ export function RulesAndContracts() {
                     {r.active ? "ON" : "OFF"}
                   </span>
                 </td>
+                {/* 下のフォームへ読み込む。ID を手で打ち直さずに更新できる。 */}
+                <td className="px-3 py-2 text-center">
+                  <button
+                    onClick={() => {
+                      setForm({ ...r, modelKeyFilter: r.modelKeyFilter ?? "" });
+                      setMsg(`「${r.name}」を編集中です（下のフォーム）`);
+                    }}
+                    className="text-xs font-semibold text-brand-primary"
+                  >
+                    編集
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -412,10 +440,35 @@ export function RulesAndContracts() {
 
       {/* ルール登録フォーム */}
       <div className="mb-8 rounded-card border border-surface-border bg-white p-4 shadow-card">
-        <div className="mb-3 text-sm font-semibold text-ink">ルール登録 / 更新</div>
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-sm font-semibold text-ink">
+            {editingExisting ? `ルールを編集: ${form.id}` : "ルールを新規登録"}
+          </span>
+          {editingExisting && (
+            <button
+              onClick={() => setForm(newRuleFor(divisionFilter))}
+              className="rounded-card border border-surface-border px-2 py-0.5 text-xs text-ink-muted"
+            >
+              新規登録に戻す
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <Field label="ID"><input className="inp" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="R-XXX" /></Field>
-          <Field label="事業部"><input className="inp" value={form.division} onChange={(e) => setForm({ ...form, division: e.target.value })} /></Field>
+          <Field label="事業部">
+            <input
+              className="inp"
+              list="rule-divisions"
+              placeholder="事業部を選択または入力"
+              value={form.division}
+              onChange={(e) => setForm({ ...form, division: e.target.value })}
+            />
+            <datalist id="rule-divisions">
+              {divisions.map((d) => (
+                <option key={d} value={d} />
+              ))}
+            </datalist>
+          </Field>
           <Field label="ルール名"><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="課金形態(空=全)"><input className="inp" value={form.modelKeyFilter ?? ""} onChange={(e) => setForm({ ...form, modelKeyFilter: e.target.value })} placeholder="line_call" /></Field>
           <Field label="種別">
@@ -445,7 +498,9 @@ export function RulesAndContracts() {
             算定式: {specOf(form.ruleType)!.formula}
           </div>
         )}
-        <button onClick={saveRule} className="mt-3 rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">保存</button>
+        <button onClick={saveRule} className="mt-3 rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
+          {editingExisting ? "上書き保存" : "登録"}
+        </button>
       </div>
 
       {/* 契約Dig反映 */}
