@@ -298,10 +298,24 @@ export function RulesAndContracts() {
     }
   }
 
-  // 事業部の選択肢はルールと契約の両方から集める。
+  // 事業部の選択肢は「登録済みの組織（事業部）」と「ルール・契約に出てくる事業部名」の和集合。
+  // どちらか片方にしか無いものも必ず出す（片方だけを見ると選択肢から消えてしまうため）。
+  const orgDivisions = orgUnits.filter((u) => u.level === "事業部").map((u) => u.name);
+  const ruleDivisions = [...rules.map((r) => r.division), ...contracts.map((c) => c.division)];
   const divisions = Array.from(
-    new Set([...rules.map((r) => r.division), ...contracts.map((c) => c.division)]),
+    new Set([...orgDivisions, ...ruleDivisions].filter((d) => d && d.trim() !== "")),
   ).sort();
+
+  /** 選択肢の注記。組織とルールのどちらが欠けているかを見せる。 */
+  const divisionNote = (d: string) => {
+    const hasOrg = orgDivisions.includes(d);
+    const hasRule = ruleDivisions.includes(d);
+    if (hasOrg && hasRule) return "";
+    if (hasOrg) return "（ルール未登録）";
+    return "（組織未登録）";
+  };
+  // 名前が食い違っている事業部（＝予算設定とルールが噛み合わない）。
+  const mismatched = divisions.filter((d) => divisionNote(d) !== "");
   // 一覧に同じIDがあれば「編集中」。無ければ新規登録。
   const editingExisting = form.id !== "" && rules.some((r) => r.id === form.id);
   const matchesDivision = (d: string) => !divisionFilter || d === divisionFilter;
@@ -345,6 +359,7 @@ export function RulesAndContracts() {
           {divisions.map((d) => (
             <option key={d} value={d}>
               {d}
+              {divisionNote(d)}
             </option>
           ))}
         </select>
@@ -354,6 +369,22 @@ export function RulesAndContracts() {
             : "この画面のすべてのブロックが対象です"}
         </span>
       </div>
+
+      {mismatched.length > 0 && (
+        <div className="mb-4 rounded-card bg-amber-50 px-4 py-3 text-xs text-semantic-warn">
+          <b>組織名とルールの事業部名が一致していません。</b>
+          予算設定は組織側、獲得ルールは事業部名で紐づくため、名前を揃えないと片方しか表示されません。
+          <ul className="mt-1 space-y-0.5">
+            {mismatched.map((d) => (
+              <li key={d}>
+                ・{d} … {divisionNote(d) === "（組織未登録）"
+                  ? "ルールはあるが、同じ名前の組織が未登録（従業員マスタの「組織設定」で作成）"
+                  : "組織はあるが、この事業部のルールが未登録（下のフォームで登録）"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* 事業部ごとの制度サマリ */}
       {schemes.map((sc) => (
