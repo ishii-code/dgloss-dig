@@ -181,6 +181,8 @@ export function RulesAndContracts() {
   const [members, setMembers] = useState<{ personId: string; name: string }[]>([]);
   const [form, setForm] = useState<Rule>(emptyRule);
   const [msg, setMsg] = useState<string | null>(null);
+  // 登録フォームのメッセージ。画面上部の msg だと遠すぎて気づけないため、ボタンの隣に出す。
+  const [formMsg, setFormMsg] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | "loading">("loading");
   // 事業部フィルタ（空 = 全事業部）。ルール一覧・契約一覧の両方に効かせる。
   const [divisionFilter, setDivisionFilter] = useState("");
@@ -217,21 +219,27 @@ export function RulesAndContracts() {
   const nameOf = (id: string) => members.find((m) => m.personId === id)?.name ?? id;
 
   async function saveRule() {
-    if (!form.id || !form.name || !form.division) {
-      setMsg("ID・名称・事業部 は必須です");
+    const missing = [
+      !form.id && "ID",
+      !form.division && "事業部",
+      !form.name && "ルール名",
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      setFormMsg(`${missing.join("・")} を入力してください`);
       return;
     }
+    setFormMsg(null);
     try {
       await apiSend("/api/calc-rules", "POST", {
         ...form,
         modelKeyFilter: form.modelKeyFilter || null,
         actor: ACTOR,
       });
-      setMsg(`ルール ${form.id} を保存しました`);
+      setFormMsg(`ルール ${form.id} を保存しました`);
       setForm(newRuleFor(divisionFilter));
       await load();
     } catch (e) {
-      setMsg(`保存失敗: ${(e as Error).message}`);
+      setFormMsg(`保存できませんでした: ${(e as Error).message}`);
     }
   }
 
@@ -503,8 +511,8 @@ export function RulesAndContracts() {
           )}
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          <Field label="ID"><input className="inp" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="R-XXX" /></Field>
-          <Field label="事業部">
+          <Field label="ID" required><input className="inp" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} placeholder="R-XXX（任意の識別子）" /></Field>
+          <Field label="事業部" required>
             <input
               className="inp"
               list="rule-divisions"
@@ -518,7 +526,7 @@ export function RulesAndContracts() {
               ))}
             </datalist>
           </Field>
-          <Field label="ルール名"><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+          <Field label="ルール名" required><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="AIテレアポ（回線・コール単価）" /></Field>
           <Field label="課金形態(空=全)"><input className="inp" value={form.modelKeyFilter ?? ""} onChange={(e) => setForm({ ...form, modelKeyFilter: e.target.value })} placeholder="line_call" /></Field>
           <Field label="種別">
             <select className="inp" value={form.ruleType} onChange={(e) => setForm({ ...form, ruleType: e.target.value })}>
@@ -547,9 +555,24 @@ export function RulesAndContracts() {
             算定式: {specOf(form.ruleType)!.formula}
           </div>
         )}
-        <button onClick={saveRule} className="mt-3 rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
-          {editingExisting ? "上書き保存" : "登録"}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button onClick={saveRule} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">
+            {editingExisting ? "上書き保存" : "登録"}
+          </button>
+          {/* 画面上部だとフォームから遠く気づけないため、ボタンの隣に出す。 */}
+          {formMsg && (
+            <span
+              className={`rounded-card px-3 py-1.5 text-xs ${
+                formMsg.includes("保存しました")
+                  ? "bg-emerald-50 text-semantic-success"
+                  : "bg-rose-50 text-semantic-danger"
+              }`}
+            >
+              {formMsg}
+            </span>
+          )}
+          <span className="text-[11px] text-ink-faint">* は必須</span>
+        </div>
       </div>
 
       {/* 契約Dig反映 */}
@@ -584,10 +607,22 @@ export function RulesAndContracts() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  /** 未入力だと登録できない項目。ラベルに * を付ける */
+  required?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] text-ink-muted">{label}</span>
+      <span className="mb-1 block text-[11px] text-ink-muted">
+        {label}
+        {required && <span className="ml-0.5 text-semantic-danger">*</span>}
+      </span>
       {children}
     </label>
   );
