@@ -207,7 +207,7 @@ async function main() {
     // カスタマーグロース（新たに生まれた粗利を原資にする・確定値）
     { id: "R-CG-UPSELL", division: "カスタマーグロース事業部", name: "アップセル（追加回線・コール）", ruleType: "アップセル粗利" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 30, active: true },
     { id: "R-CG-RENEWAL", division: "カスタマーグロース事業部", name: "更新（2年目以降）", ruleType: "更新粗利" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 20, active: true },
-    { id: "R-CG-CHURN", division: "カスタマーグロース事業部", name: "途中解約（チャーン損失）", ruleType: "チャーン損失" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true },
+    { id: "R-CG-CHURN", division: "カスタマーグロース事業部", name: "途中解約（チャーン損失）", ruleType: "チャーン損失" as const, modelKeyFilter: null, unitLine: 0, unitCall: 0, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 50, active: true },
   ];
   for (const r of rules) {
     await prisma.calcRule.upsert({ where: { id: r.id }, update: r, create: r });

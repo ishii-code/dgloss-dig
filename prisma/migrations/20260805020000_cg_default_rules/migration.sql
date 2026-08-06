@@ -14,5 +14,5 @@ VALUES
   ('R-CG-RENEWAL', 'カスタマーグロース事業部', '更新（2年目以降）',
    '更新粗利', NULL, 0, 0, 0, 0, 50, 20, true, NOW(), NOW()),
   ('R-CG-CHURN', 'カスタマーグロース事業部', '途中解約（チャーン損失）',
-   'チャーン損失', NULL, 0, 0, 0, 0, 50, 0, true, NOW(), NOW())
+   'チャーン損失', NULL, 0, 0, 0, 0, 50, 50, true, NOW(), NOW())
 ON CONFLICT ("id") DO NOTHING;
