@@ -1,3 +1,10 @@
+# [1.39.0](https://github.com/ishii-code/dgloss-dig/compare/v1.38.1...v1.39.0) (2026-08-06)
+
+
+### Features
+
+* **rules:** チャーンをCGと営業で折半、制度サマリの書式統一と事業部フィルタの適用範囲を修正 ([#89](https://github.com/ishii-code/dgloss-dig/issues/89)) ([35b466c](https://github.com/ishii-code/dgloss-dig/commit/35b466c5ff7b2be4ecb529c7787084f9fd2aaad2))
+
 ## [1.38.1](https://github.com/ishii-code/dgloss-dig/compare/v1.38.0...v1.38.1) (2026-08-04)
 
 
