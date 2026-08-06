@@ -62,7 +62,7 @@ const COLUMNS: {
  * 事業部別の Dig予算設定。旧「設定タブ」の全社一律の指標をここへ集約した。
  * 空欄は上位組織を継承し、どこにも無ければ全社既定が使われる。
  */
-export function DivisionSettings() {
+export function DivisionSettings({ divisionFilter = "" }: { divisionFilter?: string }) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,10 +90,11 @@ export function DivisionSettings() {
     }
   }
 
-  // 階層順（事業部 → 配下）に並べる。
+  // 階層順（事業部 → 配下）に並べる。事業部で絞る場合はその事業部の枝だけ。
   const ordered: { unit: Unit; depth: number }[] = [];
   const push = (parent: number | null, depth: number) => {
     for (const u of units.filter((x) => x.parentId === parent)) {
+      if (depth === 0 && divisionFilter && u.name !== divisionFilter) continue;
       ordered.push({ unit: u, depth });
       push(u.id, depth + 1);
     }
@@ -129,7 +130,9 @@ export function DivisionSettings() {
             {ordered.length === 0 ? (
               <tr>
                 <td colSpan={COLUMNS.length + 2} className="px-3 py-3 text-ink-muted">
-                  組織が未登録です。従業員マスタの「組織設定」でまず事業部を追加してください。
+                  {divisionFilter
+                    ? `「${divisionFilter}」に対応する組織が登録されていません（組織設定で同じ名前の事業部を作ってください）`
+                    : "組織が未登録です。従業員マスタの「組織設定」でまず事業部を追加してください。"}
                 </td>
               </tr>
             ) : (

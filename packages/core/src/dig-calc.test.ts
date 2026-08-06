@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canAccessTab, CG_INCENTIVE_RATE, DEFAULT_SETTING, TAB_MIN_LEVEL } from "@dig/contracts";
 import {
   barterDig,
+  CG_SPLIT_CHURN_SALES_PCT,
   CG_SPLIT_RENEWAL_SALES_PCT,
   CG_SPLIT_UPSELL_SALES_PCT,
   cgChurnDig,
@@ -518,8 +519,11 @@ describe("カスタマーグロースの獲得Dig", () => {
     expect(cgSplit(500_000, 0)).toEqual({ cg: 500_000, sales: 0 });
   });
 
-  it("マイナスDigは分配しない（チャーンはCGが負う）", () => {
-    expect(cgSplit(-1_200_000, 30)).toEqual({ cg: 0, sales: 0 });
+  it("マイナスも同じ式で分担する（チャーンはCGと営業で折半）", () => {
+    expect(cgSplit(-1_200_000, 50)).toEqual({ cg: -600_000, sales: -600_000 });
+    // 端数はCG側へ寄せ、合計は必ず原資と一致する。
+    const r = cgSplit(-1_001, 50);
+    expect(r.cg + r.sales).toBe(-1_001);
   });
 });
 
@@ -680,9 +684,16 @@ describe("CGの獲得ルール（ルール登録から算定）", () => {
     expect(r.sales).toBe(360_000);
   });
 
-  it("チャーン: 途中解約はマイナス、営業には分配しない", () => {
-    const r = cgRuleDig(rule("チャーン損失", 30), 300_000, 8, false);
+  it("チャーン: 途中解約のマイナスは CG と営業で折半", () => {
+    const r = cgRuleDig(rule("チャーン損失", CG_SPLIT_CHURN_SALES_PCT), 300_000, 8, false);
     expect(r.total).toBe(-1_200_000);
+    expect(r.cg).toBe(-600_000);
+    expect(r.sales).toBe(-600_000);
+    expect(r.cg + r.sales).toBe(r.total); // 負担を増やさない
+  });
+
+  it("チャーン: 分配率0ならCGが全額負う（初回営業が退職済みなど）", () => {
+    const r = cgRuleDig(rule("チャーン損失", 0), 300_000, 8, false);
     expect(r.cg).toBe(-1_200_000);
     expect(r.sales).toBe(0);
   });

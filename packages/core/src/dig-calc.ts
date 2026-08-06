@@ -578,6 +578,8 @@ export const CG_MARGIN_RATE = 0.5;
 /** 分配率の既定値（CG:営業）。アップセルは 70:30、更新は 80:20。 */
 export const CG_SPLIT_UPSELL_SALES_PCT = 30;
 export const CG_SPLIT_RENEWAL_SALES_PCT = 20;
+/** チャーン（途中解約）のマイナスは CG と営業で折半する。 */
+export const CG_SPLIT_CHURN_SALES_PCT = 50;
 
 /**
  * 新たに生まれた粗利から獲得Digを出す（Dig転換率100%＝粗利1円=1Dig・千円切捨）。
@@ -631,13 +633,17 @@ export function cgChurnDig(
 
 /**
  * 原資を CG と初回担当営業へ分ける。原資は増やさず、同じ額を割る。
- * @param totalDig 分配前の獲得Dig
+ * チャーン（マイナス）も同じ式で折半できるよう、正負どちらでも扱える。
+ * 端数は必ず CG 側に寄せる（cg + sales === totalDig を保つ）。
+ * @param totalDig 分配前の獲得Dig（マイナス可）
  * @param salesPercent 営業の取り分（%）
  */
 export function cgSplit(totalDig: number, salesPercent: number): { cg: number; sales: number } {
-  if (totalDig <= 0) return { cg: 0, sales: 0 };
+  if (totalDig === 0) return { cg: 0, sales: 0 };
   const pct = Math.min(100, Math.max(0, salesPercent));
-  const sales = Math.floor((totalDig * pct) / 100);
+  // trunc は 0 方向へ丸めるため、マイナスでも営業の負担が過大にならない。
+  const raw = Math.trunc((totalDig * pct) / 100);
+  const sales = raw === 0 ? 0 : raw; // -0 を返さない
   return { cg: totalDig - sales, sales };
 }
 
@@ -669,9 +675,10 @@ export function cgRuleDig(
       return { total, cg: split.cg, sales: split.sales };
     }
     case "チャーン損失": {
-      // マイナスは分配しない（チャーンは CG が負う）。
+      // マイナスも CG と初回営業で分担する（既定は折半）。
       const total = cgChurnDig(monthlyAmount, months, atRenewal, marginRate);
-      return { total, cg: total, sales: 0 };
+      const split = cgSplit(total, rule.salesSharePct);
+      return { total, cg: split.cg, sales: split.sales };
     }
     default:
       return none;

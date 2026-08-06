@@ -30,7 +30,7 @@ const PARAM_LABEL: Record<ParamKey, string> = {
   ratioPercent: "月額割合(%)",
   fixedDig: "固定Dig",
   marginRatePct: "粗利率(%)",
-  salesSharePct: "営業への分配率(%)",
+  salesSharePct: "営業の割合(%)",
 };
 
 /**
@@ -90,12 +90,12 @@ const RULE_SPEC: Record<
     formula: "月額 × 粗利率 × 更新月数 → 分配",
   },
   チャーン損失: {
-    fields: ["marginRatePct"],
+    fields: ["marginRatePct", "salesSharePct"],
     summary: (r) => [
       { label: "粗利率", value: `${r.marginRatePct}%` },
-      { label: "計上", value: "残契約月数分をマイナス" },
+      { label: "負担", value: `CG ${100 - r.salesSharePct} : 営業 ${r.salesSharePct}` },
     ],
-    formula: "月額 × 粗利率 × 残契約月数 を マイナス計上（満了は対象外）",
+    formula: "月額 × 粗利率 × 残契約月数 を マイナス計上し、CGと初回営業で分担（満了は対象外）",
   },
 };
 
@@ -301,30 +301,30 @@ export function RulesAndContracts() {
         division: d,
         setting: unit?.effectiveSetting ?? null,
         incentiveRatePct: unit?.effectiveIncentiveRatePct ?? null,
-        rules: rules.filter((r) => r.division === d),
+        // 制度サマリのパラメータ表記も一覧と同じ RULE_SPEC から作る（営業もCGも同じ書式）。
+        rules: rules
+          .filter((r) => r.division === d)
+          .map((r) => ({
+            ruleType: r.ruleType,
+            name: r.name,
+            marginRatePct: r.marginRatePct,
+            salesSharePct: r.salesSharePct,
+            active: r.active,
+            params: specOf(r.ruleType)?.summary(r) ?? [],
+          })),
       };
     });
   const visibleContracts = contracts.filter((c) => matchesDivision(c.division));
 
   return (
     <>
-      {/* 事業部別の予算指標・昇降級しきい値（旧「設定」タブから集約） */}
-      <DivisionSettings />
-
-      {/* 途中解約アラート（マイナスDigを確定するまで残る） */}
-      <ChurnAlerts />
-
-      <SectionHeader
-        title="Dig獲得ルール（事業部別）"
-        note="1契約でどういう契約内容だと何Dig付与するかを定義（要件 F-3）"
-        accent="accent"
-      />
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-xs text-ink-muted">事業部で絞り込む</span>
+      {/* 事業部フィルタはタブ全体に効かせる（この下の全ブロックが対象）。 */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-card border border-surface-border bg-white px-4 py-3 shadow-card">
+        <span className="text-sm font-semibold text-ink">事業部</span>
         <select
           value={divisionFilter}
           onChange={(e) => setDivisionFilter(e.target.value)}
-          className="rounded-card border border-surface-border bg-white px-2 py-1 text-sm"
+          className="rounded-card border border-surface-border bg-white px-3 py-1.5 text-sm font-semibold"
         >
           <option value="">全事業部</option>
           {divisions.map((d) => (
@@ -333,10 +333,29 @@ export function RulesAndContracts() {
             </option>
           ))}
         </select>
+        <span className="text-xs text-ink-muted">
+          {divisionFilter
+            ? `${divisionFilter} の予算設定・獲得ルール・途中解約を表示中`
+            : "この画面のすべてのブロックが対象です"}
+        </span>
       </div>
+
+      {/* 事業部ごとの制度サマリ */}
       {schemes.map((sc) => (
         <DivisionSchemeCard key={sc.division} scheme={sc} />
       ))}
+
+      {/* 事業部別の予算指標・昇降級しきい値（旧「設定」タブから集約） */}
+      <DivisionSettings divisionFilter={divisionFilter} />
+
+      {/* 途中解約アラート（マイナスDigを確定するまで残る） */}
+      <ChurnAlerts divisionFilter={divisionFilter} />
+
+      <SectionHeader
+        title="Dig獲得ルール（事業部別）"
+        note="1契約でどういう契約内容だと何Dig付与するかを定義（要件 F-3）"
+        accent="accent"
+      />
 
       {source === "mock" && (
         <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">

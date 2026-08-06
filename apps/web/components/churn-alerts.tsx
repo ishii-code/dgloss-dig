@@ -30,7 +30,7 @@ export interface ChurnAlert {
  * 途中解約アラート。契約管理DBの途中解約フラグを日次同期で取り込み、
  * 管理者がマイナスDigを確定するまで未処理として出し続ける。
  */
-export function ChurnAlerts() {
+export function ChurnAlerts({ divisionFilter = "" }: { divisionFilter?: string }) {
   const [rows, setRows] = useState<ChurnAlert[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -55,7 +55,9 @@ export function ChurnAlerts() {
     void load();
   }, [load]);
 
-  const pending = rows.filter((r) => r.churnDig === null);
+  // 事業部で絞る（タブ上部の選択に追随）。
+  const visible = divisionFilter ? rows.filter((r) => r.division === divisionFilter) : rows;
+  const pending = visible.filter((r) => r.churnDig === null);
 
   async function decide(r: ChurnAlert) {
     const raw = (draft[r.contractId] ?? "").trim();
@@ -140,14 +142,16 @@ export function ChurnAlerts() {
             </tr>
           </thead>
           <tbody className="tabular">
-            {rows.length === 0 ? (
+            {visible.length === 0 ? (
               <tr>
                 <td colSpan={8} className="px-3 py-3 text-ink-muted">
-                  途中解約フラグの立っている契約はありません。
+                  {divisionFilter
+                    ? `${divisionFilter} に途中解約フラグの立っている契約はありません。`
+                    : "途中解約フラグの立っている契約はありません。"}
                 </td>
               </tr>
             ) : (
-              rows.map((r) => (
+              visible.map((r) => (
                 <tr
                   key={r.contractId}
                   className={`border-b border-surface-border last:border-0 ${

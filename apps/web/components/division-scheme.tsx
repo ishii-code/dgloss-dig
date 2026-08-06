@@ -1,13 +1,15 @@
 "use client";
 
-import { man } from "@/lib/format";
+import { yen } from "@/lib/format";
 
-interface SchemeRule {
+export interface SchemeRule {
   ruleType: string;
   name: string;
   marginRatePct: number;
   salesSharePct: number;
   active: boolean;
+  /** 一覧と同じパラメータ表記（RULE_SPEC 由来） */
+  params: { label: string; value: string }[];
 }
 
 interface SchemeSetting {
@@ -51,7 +53,7 @@ export function DivisionSchemeCard({ scheme }: { scheme: DivisionScheme }) {
                 （役職ベース × {s.insuranceCoefficient} × 按分 ＋ 座席代）× {s.budgetCoefficient}
               </div>
               <div className="mt-1 text-[11px] text-ink-faint">
-                座席代 正社員 {man(s.commonCostFulltime)} / アルバイト {man(s.commonCostParttime)}
+                座席代 正社員 {yen(s.commonCostFulltime)}円 / アルバイト {yen(s.commonCostParttime)}円（月額）
               </div>
             </>
           ) : (
@@ -64,13 +66,18 @@ export function DivisionSchemeCard({ scheme }: { scheme: DivisionScheme }) {
           {active.length === 0 ? (
             <div className="text-xs text-ink-faint">有効なルールがありません</div>
           ) : (
-            <ul className="space-y-0.5 text-xs text-ink">
+            <ul className="space-y-1 text-xs text-ink">
               {active.map((r) => (
                 <li key={r.name}>
-                  {r.ruleType}
-                  {["アップセル粗利", "更新粗利"].includes(r.ruleType) &&
-                    `（粗利率${r.marginRatePct}% / CG ${100 - r.salesSharePct}：営業 ${r.salesSharePct}）`}
-                  {r.ruleType === "チャーン損失" && `（粗利率${r.marginRatePct}% をマイナス計上）`}
+                  <div className="font-medium">{r.ruleType}</div>
+                  <div className="flex flex-wrap gap-x-3">
+                    {r.params.map((p) => (
+                      <span key={p.label} className="whitespace-nowrap">
+                        <span className="text-ink-faint">{p.label}</span>{" "}
+                        <span className="text-ink-muted">{p.value}</span>
+                      </span>
+                    ))}
+                  </div>
                 </li>
               ))}
             </ul>
