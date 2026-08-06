@@ -1,3 +1,10 @@
+## [1.39.1](https://github.com/ishii-code/dgloss-dig/compare/v1.39.0...v1.39.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **rules:** ルール登録フォームがAIテレアポの実ルールで埋まっていたのを修正 ([#90](https://github.com/ishii-code/dgloss-dig/issues/90)) ([160fa97](https://github.com/ishii-code/dgloss-dig/commit/160fa97f497f62f6a24701a311c40175179ebd7b))
+
 # [1.39.0](https://github.com/ishii-code/dgloss-dig/compare/v1.38.1...v1.39.0) (2026-08-06)
 
 
