@@ -267,9 +267,50 @@ describe("Dig獲得ルール（F-3・keiyaku連携）", () => {
     ],
   };
 
-  it("回線コール単価: 回線2×5万 + コール3×5万 = 25万", () => {
-    const rule = { id: "r1", division: "AIテレアポ事業部", name: "AIテレアポ", ruleType: "回線コール単価" as const, modelKeyFilter: null, unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true };
-    expect(computeContractDig(contract, rule)).toBe(250_000);
+  /**
+   * AIテレアポの成果Dig。
+   * （回線数 × 5万 ＋ コール数/1万 × 5万）× 契約月数 ＋ 初期費用（千円切捨）
+   */
+  const aitel = { id: "r1", division: "AIテレアポ事業部", name: "AIテレアポ", ruleType: "回線コール単価" as const, modelKeyFilter: null, unitLine: 50000, unitCall: 50000, ratioPercent: 0, fixedDig: 0, marginRatePct: 50, salesSharePct: 0, active: true };
+
+  it("回線3本・35,000コール・12ヶ月・初期費用123,456円", () => {
+    const c = {
+      ...contract,
+      termMonths: 12,
+      initialFee: 123_456,
+      lineItems: [
+        { key: "line", qty: 3, unit: 0 },
+        { key: "call", qty: 35_000, unit: 0 },
+      ],
+    };
+    // 回線 3×5万=15万 / コール 3.5万コール分=17.5万 → 月32.5万
+    // 32.5万 × 12 = 390万、初期費用 123,456 → 123,000
+    expect(computeContractDig(c, aitel)).toBe(3_900_000 + 123_000);
+  });
+
+  it("コールは万コール未満も按分する", () => {
+    const c = {
+      ...contract,
+      termMonths: 1,
+      initialFee: 0,
+      lineItems: [{ key: "call", qty: 5_000, unit: 0 }],
+    };
+    expect(computeContractDig(c, aitel)).toBe(25_000); // 0.5万コール × 5万
+  });
+
+  it("初期費用は千円未満を切り捨てる", () => {
+    const c = { ...contract, termMonths: 0, initialFee: 1_234_500, lineItems: [] };
+    expect(computeContractDig(c, aitel)).toBe(1_234_000);
+  });
+
+  it("契約期間が0でも初期費用は計上する", () => {
+    const c = {
+      ...contract,
+      termMonths: 0,
+      initialFee: 50_000,
+      lineItems: [{ key: "line", qty: 3, unit: 0 }],
+    };
+    expect(computeContractDig(c, aitel)).toBe(50_000);
   });
 
   it("初回発注1to1: 1,234,500 → 千円切捨 1,234,000", () => {

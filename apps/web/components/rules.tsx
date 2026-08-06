@@ -26,7 +26,7 @@ type ParamKey = "unitLine" | "unitCall" | "ratioPercent" | "fixedDig" | "marginR
 
 const PARAM_LABEL: Record<ParamKey, string> = {
   unitLine: "回線単価",
-  unitCall: "コール単価",
+  unitCall: "コール単価(1万コールあたり)",
   ratioPercent: "月額割合(%)",
   fixedDig: "固定Dig",
   marginRatePct: "粗利率(%)",
@@ -47,8 +47,13 @@ const RULE_SPEC: Record<
 > = {
   回線コール単価: {
     fields: ["unitLine", "unitCall"],
-    summary: (r) => [{ label: "単価", value: `回線 ${num(r.unitLine)} / コール ${num(r.unitCall)}` }],
-    formula: "回線数 × 回線単価 ＋ コール数 × コール単価",
+    summary: (r) => [
+      { label: "単価", value: `回線 ${num(r.unitLine)} / 1万コール ${num(r.unitCall)}` },
+      { label: "期間", value: "契約月数を乗算" },
+      { label: "初期費用", value: "1円=1Dig（千円切捨）を加算" },
+    ],
+    formula:
+      "（回線数 × 回線単価 ＋ コール数÷1万 × コール単価）× 契約月数 ＋ 初期費用（千円切捨）",
   },
   初回発注1to1: {
     fields: [],
