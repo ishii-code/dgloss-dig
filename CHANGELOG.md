@@ -1,3 +1,11 @@
+## [1.40.1](https://github.com/ishii-code/dgloss-dig/compare/v1.40.0...v1.40.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **accounts:** 登録したアカウントが一覧に出ない問題を修正（氏名検索を追加） ([#96](https://github.com/ishii-code/dgloss-dig/issues/96)) ([a286e72](https://github.com/ishii-code/dgloss-dig/commit/a286e722c62ce8ff07278718c853ea76e707d539))
+* **rules:** 登録ボタンが無反応に見える問題を修正（エラーが画面外に出ていた） ([#95](https://github.com/ishii-code/dgloss-dig/issues/95)) ([369474a](https://github.com/ishii-code/dgloss-dig/commit/369474ab7ccb02a9c136b8a8df2093f1585a2375))
+
 # [1.40.0](https://github.com/ishii-code/dgloss-dig/compare/v1.39.2...v1.40.0) (2026-08-06)
 
 
