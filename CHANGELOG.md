@@ -1,3 +1,10 @@
+# [1.41.0](https://github.com/ishii-code/dgloss-dig/compare/v1.40.1...v1.41.0) (2026-08-13)
+
+
+### Features
+
+* **accounts:** アカウント管理を ADMIN 以上に開放（権限の格上げは禁止） ([#98](https://github.com/ishii-code/dgloss-dig/issues/98)) ([d81786e](https://github.com/ishii-code/dgloss-dig/commit/d81786e0feac9b174faa1f8cdaba858c832a7455))
+
 ## [1.40.1](https://github.com/ishii-code/dgloss-dig/compare/v1.40.0...v1.40.1) (2026-08-13)
 
 
