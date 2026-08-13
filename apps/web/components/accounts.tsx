@@ -104,6 +104,8 @@ export function AccountsAdmin() {
   const [orgFilter, setOrgFilter] = useState("");
   /** パスワードの発行状況で絞り込む。"" = すべて */
   const [pwFilter, setPwFilter] = useState<"" | "none" | "temp" | "set">("");
+  /** 氏名・メール・従業員IDでの検索。入力中は組織の絞り込みを無視して全アカウントから探す。 */
+  const [q, setQ] = useState("");
 
   // 一括発行で選べるのは事業部とグループ（チームは出さない）。
   const orgOptions = allOrgUnits.filter((o) => o.level === "事業部" || o.level === "グループ");
@@ -158,13 +160,27 @@ export function AccountsAdmin() {
   // 組織で絞るとどこにも出てこなくなるため、専用の選択肢を用意して見えるようにする。
   const noOrgAccounts = accounts.filter((a) => a.orgUnitId == null);
 
-  // パスワードの発行状況での絞り込み。件数はこの組織の中での内訳を出す。
+  /**
+   * 氏名・メール・従業員ID・事業部での一致。
+   * 検索中は組織の絞り込みを無視して**全アカウント**から探す。
+   * 登録／更新フォームで手作りしたアカウントは従業員IDが未設定だと組織が付かず、
+   * 事業部を選んだ一覧には出てこないため、検索だけは必ず全体に当てる。
+   */
+  const keyword = q.trim().toLowerCase();
+  const matches = (a: Account) =>
+    keyword === "" ||
+    [a.name, a.email, a.personId ?? "", a.division ?? ""].some((v) =>
+      v.toLowerCase().includes(keyword),
+    );
+  const searched = keyword ? accounts.filter(matches) : inScope;
+
+  // パスワードの発行状況での絞り込み。件数は今の表示範囲の中での内訳を出す。
   const pwCount = {
-    none: inScope.filter((a) => pwStateOf(a) === "none").length,
-    temp: inScope.filter((a) => pwStateOf(a) === "temp").length,
-    set: inScope.filter((a) => pwStateOf(a) === "set").length,
+    none: searched.filter((a) => pwStateOf(a) === "none").length,
+    temp: searched.filter((a) => pwStateOf(a) === "temp").length,
+    set: searched.filter((a) => pwStateOf(a) === "set").length,
   };
-  const visible = pwFilter ? inScope.filter((a) => pwStateOf(a) === pwFilter) : inScope;
+  const visible = pwFilter ? searched.filter((a) => pwStateOf(a) === pwFilter) : searched;
 
   async function load() {
     try {
@@ -348,7 +364,18 @@ export function AccountsAdmin() {
     }
     try {
       await apiSend("/api/accounts", "POST", { ...form, actor: ACTOR });
-      setMsg(`アカウント ${form.name} を保存しました`);
+      // 保存しただけでは事業部で絞った一覧に出てこない（組織は従業員マスタ側にあるため）。
+      // 保存した本人を必ず一覧へ出すため、氏名で検索した状態にして絞り込みを外す。
+      setQ(form.name);
+      setPwFilter("");
+      setMsg(
+        `アカウント ${form.name} を保存しました。上の一覧に「${form.name}」で検索した状態にしました。\n` +
+          (form.personId
+            ? "行の右端の「仮PW発行」を押すと仮パスワードを発行できます。"
+            : "従業員IDが未設定のため所属組織が付きません（事業部を選んだ一覧には出ません）。" +
+              "従業員IDを設定すると事業部での絞り込みや一括発行の対象になります。" +
+              "仮パスワードは行の右端の「仮PW発行」で今すぐ発行できます。"),
+      );
       setForm(empty);
       await load();
     } catch (e) {
@@ -423,12 +450,34 @@ export function AccountsAdmin() {
             <option value="temp">仮パスワード（{pwCount.temp}名）</option>
             <option value="set">設定済み（{pwCount.set}名）</option>
           </select>
+          {/* 氏名で探す。組織が未設定のアカウントも必ず見つかるよう全体に当てる。 */}
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="氏名・メール・従業員IDで検索"
+            className="w-56 rounded-card border border-surface-border bg-white px-2 py-1.5 text-sm"
+          />
+          {q && (
+            <button
+              onClick={() => setQ("")}
+              className="text-xs text-ink-muted underline decoration-dotted underline-offset-2"
+            >
+              検索を解除
+            </button>
+          )}
           <span className="text-xs text-ink-muted">
             表示中 {visible.length}名 / 全{accounts.length}名
           </span>
         </div>
 
-        {noOrgAccounts.length > 0 && orgFilter !== "none" && orgFilter !== "all" && (
+        {keyword && (
+          <div className="mb-3 rounded-card bg-blue-50 px-3 py-2 text-xs text-brand-primary">
+            「{q}」で<b>全アカウント {accounts.length}名</b>から検索中です（上の組織の絞り込みは無視しています）。
+            仮パスワードは行の右端の<b>「仮PW発行」</b>で1名ずつ発行できます。
+          </div>
+        )}
+
+        {noOrgAccounts.length > 0 && !keyword && orgFilter !== "none" && orgFilter !== "all" && (
           <div className="mb-3 rounded-card bg-amber-50 px-3 py-2 text-xs text-semantic-warn">
             組織が紐付いていないアカウントが <b>{noOrgAccounts.length}名</b> います
             （{noOrgAccounts.slice(0, 5).map((a) => a.name).join("・")}
@@ -661,9 +710,11 @@ export function AccountsAdmin() {
             {visible.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-3 text-ink-muted">
-                  {pwFilter
-                    ? "この条件に一致するアカウントはありません（パスワード状態の絞り込みを外してください）"
-                    : "表示できるアカウントがありません（組織設定の「Dig評価の対象」、または従業員IDの紐付けをご確認ください）"}
+                  {keyword
+                    ? `「${q}」に一致するアカウントはありません（全${accounts.length}名から検索）。まだ作成されていない可能性があります。下の「アカウント 登録 / 更新」で作成してください。`
+                    : pwFilter
+                      ? "この条件に一致するアカウントはありません（パスワード状態の絞り込みを外してください）"
+                      : "表示できるアカウントがありません（組織設定の「Dig評価の対象」、または従業員IDの紐付けをご確認ください）"}
                 </td>
               </tr>
             )}
@@ -726,11 +777,43 @@ export function AccountsAdmin() {
               {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
             </select>
           </Fld>
-          <Fld label="従業員ID(任意)"><input className="inp" value={form.personId ?? ""} onChange={(e) => setForm({ ...form, personId: e.target.value || null })} /></Fld>
+          {/* 従業員IDを入れて初めて所属組織・事業部が付く（組織は従業員マスタ側が正）。
+              手入力だと打ち間違えるため、従業員マスタから選べるようにしている。 */}
+          <Fld label="従業員ID(組織の紐付け)">
+            <input
+              className="inp"
+              list="account-person-ids"
+              placeholder="氏名か従業員IDで検索"
+              value={form.personId ?? ""}
+              onChange={(e) => {
+                const v = e.target.value.trim();
+                const m =
+                  pickerMembers.find((p) => p.personId === v) ??
+                  pickerMembers.find((p) => `${p.personId} ${p.name}` === v || p.name === v);
+                setForm({
+                  ...form,
+                  personId: m ? m.personId : v || null,
+                  name: form.name || (m?.name ?? ""),
+                });
+              }}
+            />
+            <datalist id="account-person-ids">
+              {pickerMembers.map((p) => (
+                <option key={p.personId} value={p.personId}>
+                  {p.name}（{p.division}）
+                </option>
+              ))}
+            </datalist>
+          </Fld>
         </div>
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button onClick={save} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">保存</button>
           <button onClick={() => setForm(empty)} className="rounded-card border border-surface-border px-4 py-1.5 text-sm text-ink-muted">クリア</button>
+          <span className="text-[11px] text-ink-muted">
+            保存すると上の一覧に氏名で検索した状態で表示されます。仮パスワードはその行の
+            <b>「仮PW発行」</b>から発行してください。
+            <b>従業員IDを入れないと事業部が付かず</b>、事業部で絞った一覧・一括発行の対象になりません。
+          </span>
         </div>
       </div>
       <style>{`.inp{width:100%;border:1px solid #E2E8F0;border-radius:8px;padding:6px 8px;font-size:13px}`}</style>
