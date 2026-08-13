@@ -1,6 +1,6 @@
 import { auth } from "@/auth";
 import { authEnabled } from "@/auth.config";
-import { ROLE_LEVEL, type Role } from "@dig/contracts";
+import { accountManageDenial, ROLE_LEVEL, type Role } from "@dig/contracts";
 
 export class ForbiddenError extends Error {}
 
@@ -53,8 +53,31 @@ async function requireLevel(need: number, label: string): Promise<Viewer | null>
 /** ADMIN 以上を要求する。 */
 export const requireAdmin = () => requireLevel(ROLE_LEVEL.ADMIN, "ADMIN 以上の");
 
-/** スーパーADMIN のみを許可する（従業員マスタ・アカウント管理・金融承認）。 */
+/** スーパーADMIN のみを許可する（従業員マスタ・金融承認）。 */
 export const requireSuperAdmin = () => requireLevel(ROLE_LEVEL.SUPER_ADMIN, "スーパーADMIN の");
+
+/** スーパーADMIN か。 */
+export function isSuperAdmin(v: Viewer | null): boolean {
+  return v !== null && ROLE_LEVEL[v.role] >= ROLE_LEVEL.SUPER_ADMIN;
+}
+
+/**
+ * アカウントを操作してよいかを検査する（アカウント管理は ADMIN 以上に開放済み）。
+ * 判定そのものは contracts の accountManageDenial が持つ（純粋関数・テスト対象）。
+ *
+ * @param v          操作している人（認証未設定なら null＝従来どおり素通り）
+ * @param targetRole 操作対象アカウントの現在のロール（新規作成なら undefined）
+ * @param nextRole   付与しようとしているロール（変更しないなら undefined）
+ */
+export function assertCanManageAccount(
+  v: Viewer | null,
+  targetRole?: string | null,
+  nextRole?: string | null,
+): void {
+  if (v === null) return; // 認証未設定＝従来どおり制限なし
+  const denial = accountManageDenial(v.role, targetRole, nextRole);
+  if (denial) throw new ForbiddenError(denial);
+}
 
 /**
  * 本人（または ADMIN 以上）であることを要求する。

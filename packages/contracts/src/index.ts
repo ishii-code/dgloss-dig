@@ -501,7 +501,7 @@ export type Account = z.infer<typeof AccountSchema>;
 
 /**
  * 画面（タブ）へのアクセスに必要な最低ロールレベル。
- * finance(金融承認)/master(従業員マスタ)/accounts(アカウント管理)= SUPER_ADMIN のみ。
+ * finance(金融承認)/master(従業員マスタ)= SUPER_ADMIN のみ。
  *
  * **全タブを明示的に列挙すること。** 未定義のキーは既定値0（全員可）に落ちるため、
  * 記載漏れがそのまま全員公開になる。意図して全員公開にする場合も 0 を書く。
@@ -523,13 +523,44 @@ export const TAB_MIN_LEVEL: Record<string, number> = {
   "period-close": 1, // ADMIN 以上（承認はスーパーADMIN）
   finance: 2, // SUPER_ADMIN のみ（ディグロス金融 承認）
   master: 2, // SUPER_ADMIN のみ（従業員マスタ）
-  accounts: 2, // SUPER_ADMIN のみ（アカウント管理）
+  // ADMIN 以上（アカウント管理）。ただし ADMIN はスーパーADMIN のアカウントを
+  // 作成・変更・削除できず、パスワードも再発行できない（権限の格上げを防ぐため）。
+  // 判定は API 側の assertCanManageAccount が正で、画面側は表示を合わせているだけ。
+  accounts: 1,
 };
 
 /** ロールが対象タブにアクセスできるか。 */
 export function canAccessTab(role: Role, tabKey: string): boolean {
   const need = TAB_MIN_LEVEL[tabKey] ?? 0;
   return ROLE_LEVEL[role] >= need;
+}
+
+/**
+ * アカウント管理の操作可否。断る理由を返し、操作してよければ null を返す。
+ *
+ * アカウント管理は ADMIN 以上に開放しているが、ADMIN にスーパーADMIN を
+ * 触らせてはいけない。触れると次の経路で自分を格上げできてしまう。
+ *   - 誰かの（または自分の）role を SUPER_ADMIN にする
+ *   - スーパーADMIN の仮パスワードを再発行して、その人としてログインする
+ * どちらも金融承認・従業員マスタまで到達するため、ここで断つ。
+ *
+ * @param viewerRole 操作している人のロール
+ * @param targetRole 操作対象アカウントの現在のロール（新規作成なら null）
+ * @param nextRole   付与しようとしているロール（変更しないなら null）
+ */
+export function accountManageDenial(
+  viewerRole: Role,
+  targetRole?: Role | string | null,
+  nextRole?: Role | string | null,
+): string | null {
+  if (ROLE_LEVEL[viewerRole] >= ROLE_LEVEL.SUPER_ADMIN) return null;
+  if (targetRole === "SUPER_ADMIN") {
+    return "スーパーADMIN のアカウントはスーパーADMIN のみ操作できます";
+  }
+  if (nextRole === "SUPER_ADMIN") {
+    return "スーパーADMIN 権限の付与はスーパーADMIN のみ行えます";
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────

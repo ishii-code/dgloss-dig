@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { SectionHeader } from "./ui";
 
-const ACTOR = "gou.ishii@dgloss.co.jp";
 const ROLES: Role[] = ["SUPER_ADMIN", "ADMIN", "USER"];
 
 interface Account {
@@ -79,7 +78,27 @@ function roleStyle(role: Role): string {
   }
 }
 
-export function AccountsAdmin() {
+/**
+ * アカウント管理（ADMIN 以上）。
+ *
+ * ADMIN はスーパーADMIN のアカウントを操作できない（権限の格上げになるため）。
+ * ここでの出し分けは操作ミスを減らすためのもので、実際の判定はAPI側が行う。
+ */
+export function AccountsAdmin({
+  viewerRole = "SUPER_ADMIN",
+  actorId = "system",
+}: {
+  viewerRole?: Role;
+  actorId?: string;
+}) {
+  // 監査ログに残す操作者。サインインしているアカウントIDをそのまま使う。
+  const ACTOR = actorId;
+  const isSuper = viewerRole === "SUPER_ADMIN";
+  /** この行をこの利用者が操作してよいか（ADMIN はスーパーADMIN を触れない）。 */
+  const canManage = (a: Account) => isSuper || a.role !== "SUPER_ADMIN";
+  /** 付与できるロール。ADMIN はスーパーADMIN を選べない。 */
+  const assignableRoles = isSuper ? ROLES : ROLES.filter((r) => r !== "SUPER_ADMIN");
+
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [form, setForm] = useState<Account>(empty);
   const [msg, setMsg] = useState<string | null>(null);
@@ -185,6 +204,8 @@ export function AccountsAdmin() {
     set: searched.filter((a) => pwStateOf(a) === "set").length,
   };
   const visible = pwFilter ? searched.filter((a) => pwStateOf(a) === pwFilter) : searched;
+  // 一括発行の対象になる件数（ADMIN はスーパーADMIN を発行できない）。
+  const issuableCount = visible.filter(canManage).length;
 
   async function load() {
     try {
@@ -294,15 +315,26 @@ export function AccountsAdmin() {
    * （全件を1リクエストで処理すると実行時間制限でタイムアウトする）。
    */
   async function issuePasswordsForDisplayed(reset: boolean) {
-    const ids = visible.map((a) => a.id);
+    // ADMIN はスーパーADMIN の分を発行できないため、対象から外して送る
+    // （混ざったまま送るとAPIがまとめて弾き、1件も発行されない）。
+    const targets = visible.filter(canManage);
+    const excluded = visible.length - targets.length;
+    const ids = targets.map((a) => a.id);
     if (ids.length === 0) {
-      setMsg("表示中のアカウントがありません");
+      setMsg(
+        excluded > 0
+          ? "表示中はスーパーADMIN のアカウントのみです（ADMIN は発行できません）"
+          : "表示中のアカウントがありません",
+      );
       return;
     }
     const note = reset
       ? "既にパスワードを設定済みの人も仮パスワードにリセットされます。"
       : "既にパスワードがある人はそのままにします。";
-    if (!confirm(`表示中の ${ids.length} 名へ仮パスワードを発行します。\n${note}\nよろしいですか？`)) return;
+    const skipNote =
+      excluded > 0 ? `\nスーパーADMIN ${excluded}名は対象外です（ADMIN は発行できません）。` : "";
+    if (!confirm(`表示中の ${ids.length} 名へ仮パスワードを発行します。\n${note}${skipNote}\nよろしいですか？`))
+      return;
 
     const CHUNK = 25;
     const chunks: string[][] = [];
@@ -419,7 +451,11 @@ export function AccountsAdmin() {
     <>
       <SectionHeader
         title="アカウント管理"
-        note="スーパーADMINのみアクセス可。権限（スーパーADMIN／ADMIN／ユーザー）を付与。"
+        note={
+          isSuper
+            ? "ADMIN 以上がアクセス可。権限（スーパーADMIN／ADMIN／ユーザー）を付与。"
+            : "ADMIN は ADMIN／ユーザー のアカウントのみ操作できます（スーパーADMIN は対象外）。"
+        }
         accent="accent"
       />
 
@@ -520,10 +556,10 @@ export function AccountsAdmin() {
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <button
             onClick={() => void issuePasswordsForDisplayed(resetExisting)}
-            disabled={busy || visible.length === 0}
+            disabled={busy || issuableCount === 0}
             className="rounded-card bg-brand-accent px-5 py-2 text-sm font-bold text-white disabled:opacity-50"
           >
-            {busy ? "処理中…" : `表示中の ${visible.length}名 に仮パスワードを発行`}
+            {busy ? "処理中…" : `表示中の ${issuableCount}名 に仮パスワードを発行`}
           </button>
           <label className="flex items-center gap-1.5 text-xs text-ink-muted">
             <input
@@ -783,9 +819,20 @@ export function AccountsAdmin() {
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-center">
-                  <button onClick={() => void reissue(a.id, a.name)} className="mr-2 text-xs font-semibold text-semantic-warn">仮PW発行</button>
-                  <button onClick={() => setForm(a)} className="mr-2 text-xs font-semibold text-brand-primary">編集</button>
-                  <button onClick={() => del(a.id)} className="text-xs text-semantic-danger">削除</button>
+                  {canManage(a) ? (
+                    <>
+                      <button onClick={() => void reissue(a.id, a.name)} className="mr-2 text-xs font-semibold text-semantic-warn">仮PW発行</button>
+                      <button onClick={() => { setForm(a); setFormMsg(null); }} className="mr-2 text-xs font-semibold text-brand-primary">編集</button>
+                      <button onClick={() => del(a.id)} className="text-xs text-semantic-danger">削除</button>
+                    </>
+                  ) : (
+                    <span
+                      title="スーパーADMIN のアカウントはスーパーADMIN のみ操作できます"
+                      className="text-[11px] text-ink-faint"
+                    >
+                      操作不可
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -801,7 +848,7 @@ export function AccountsAdmin() {
           <Fld label="氏名" required><input className="inp" placeholder="藤塚 太郎" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Fld>
           <Fld label="権限">
             <select className="inp" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
-              {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+              {assignableRoles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
             </select>
           </Fld>
           {/* 従業員IDを入れて初めて所属組織・事業部が付く（組織は従業員マスタ側が正）。

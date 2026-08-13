@@ -753,6 +753,24 @@ export async function upsertAccount(input: {
   return acc;
 }
 
+/**
+ * アカウントの現在のロールを引く（存在しなければ null）。
+ * ADMIN がスーパーADMIN を操作しようとしていないかの判定に使う。
+ */
+export async function accountRole(id: string): Promise<string | null> {
+  const a = await prisma.account.findUnique({ where: { id }, select: { role: true } });
+  return a?.role ?? null;
+}
+
+/** 複数アカウントのロールをまとめて引く（仮パスワードの一括発行の判定用）。 */
+export async function accountRoles(ids: string[]): Promise<Map<string, string>> {
+  const rows = await prisma.account.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, role: true },
+  });
+  return new Map(rows.map((r) => [r.id, r.role as string]));
+}
+
 export async function deleteAccount(id: string, actor: string) {
   await prisma.account.delete({ where: { id } });
   await audit(actor, "account.delete", "Account", id, {});

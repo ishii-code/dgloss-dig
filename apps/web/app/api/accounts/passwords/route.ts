@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { handle, ok } from "@/server/http";
-import { requireAdmin } from "@/server/guard";
-import { issueTemporaryPasswords } from "@/server/repo";
+import { assertCanManageAccount, isSuperAdmin, requireAdmin } from "@/server/guard";
+import { accountRoles, issueTemporaryPasswords } from "@/server/repo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,9 +19,15 @@ const Body = z.object({
 });
 
 // 指定したアカウントへ仮パスワードを発行（ADMIN以上）。平文はこの応答でのみ返す。
+// ADMIN が実行した場合、対象にスーパーADMIN が含まれていると 403 で止める
+// （画面は表示中の全員を一括で送るため、混ざっていたら全体を弾いて気付かせる）。
 export const POST = (req: Request) =>
   handle(async () => {
-    await requireAdmin();
+    const viewer = await requireAdmin();
     const body = Body.parse(await req.json());
+    if (!isSuperAdmin(viewer) && viewer !== null) {
+      const roles = await accountRoles(body.ids);
+      for (const id of body.ids) assertCanManageAccount(viewer, roles.get(id) ?? null);
+    }
     return ok(await issueTemporaryPasswords(body.ids, body.actor, body.resetExisting));
   });
