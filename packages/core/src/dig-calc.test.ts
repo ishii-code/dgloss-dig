@@ -52,8 +52,9 @@ import {
   cgRuleDig,
   inheritedOverride,
   mergeSetting,
+  orgUnitAt,
 } from "./dig-calc.js";
-import type { OrgSettingNode, OrgSettingOverride } from "./dig-calc.js";
+import type { OrgAssignment, OrgSettingNode, OrgSettingOverride } from "./dig-calc.js";
 
 const S = DEFAULT_SETTING;
 
@@ -852,5 +853,66 @@ describe("アカウント管理の操作可否（権限の格上げ防止）", (
   it("ユーザー権限は何も操作できない（タブ権限で先に弾かれるが二重に防ぐ）", () => {
     expect(accountManageDenial("USER", "USER", "SUPER_ADMIN")).not.toBeNull();
     expect(accountManageDenial("USER", "SUPER_ADMIN")).not.toBeNull();
+  });
+});
+
+describe("所属組織の履歴（月ごとのチーム構成）", () => {
+  // 近藤: 6月は1課 → 7月から2課 → 8月はグループ直属（チーム無し）
+  const kondo: OrgAssignment[] = [
+    { fromYearMonth: "2026-06", orgUnitId: 3 },
+    { fromYearMonth: "2026-07", orgUnitId: 7 },
+    { fromYearMonth: "2026-08", orgUnitId: 2 },
+  ];
+
+  it("その月に発効している所属を返す", () => {
+    expect(orgUnitAt(kondo, "2026-06")).toBe(3);
+    expect(orgUnitAt(kondo, "2026-07")).toBe(7);
+    expect(orgUnitAt(kondo, "2026-08")).toBe(2);
+  });
+
+  it("変更が無い月は直前の所属を引き継ぐ", () => {
+    const sparse: OrgAssignment[] = [{ fromYearMonth: "2026-06", orgUnitId: 3 }];
+    expect(orgUnitAt(sparse, "2026-07")).toBe(3);
+    expect(orgUnitAt(sparse, "2026-12")).toBe(3);
+    expect(orgUnitAt(sparse, "2027-03")).toBe(3);
+  });
+
+  it("履歴が1件も無ければ fallback（＝現在の所属）を使う", () => {
+    // 履歴を入れる前のデータを壊さないための後方互換。
+    expect(orgUnitAt([], "2026-08", 5)).toBe(5);
+    expect(orgUnitAt([], "2026-08")).toBeNull();
+  });
+
+  it("履歴より前の月は最初に記録された所属を使う（後から直しても動かない）", () => {
+    // ここで「現在の所属」に落とすと、8月を直した瞬間に5月の表示まで変わってしまう。
+    expect(orgUnitAt(kondo, "2026-05", 99)).toBe(3);
+    expect(orgUnitAt(kondo, "2026-01", 99)).toBe(3);
+    // 8月を別のチームに付け替えても、5月の見え方は変わらない。
+    const moved = [...kondo.slice(0, 2), { fromYearMonth: "2026-08", orgUnitId: 42 }];
+    expect(orgUnitAt(moved, "2026-05", 99)).toBe(3);
+  });
+
+  it("未所属（null）も履歴として持てる", () => {
+    const left: OrgAssignment[] = [
+      { fromYearMonth: "2026-06", orgUnitId: 3 },
+      { fromYearMonth: "2026-08", orgUnitId: null },
+    ];
+    expect(orgUnitAt(left, "2026-07", 3)).toBe(3);
+    expect(orgUnitAt(left, "2026-08", 3)).toBeNull(); // fallback へ落ちない
+  });
+
+  it("履歴の並び順に依存しない", () => {
+    const shuffled = [kondo[2]!, kondo[0]!, kondo[1]!];
+    expect(orgUnitAt(shuffled, "2026-06")).toBe(3);
+    expect(orgUnitAt(shuffled, "2026-07")).toBe(7);
+  });
+
+  it("年をまたいでも時系列で解決する（文字列比較で崩れない）", () => {
+    const across: OrgAssignment[] = [
+      { fromYearMonth: "2026-09", orgUnitId: 1 },
+      { fromYearMonth: "2027-01", orgUnitId: 2 },
+    ];
+    expect(orgUnitAt(across, "2026-12")).toBe(1);
+    expect(orgUnitAt(across, "2027-01")).toBe(2);
   });
 });

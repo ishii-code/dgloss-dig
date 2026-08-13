@@ -29,6 +29,7 @@ import {
   mergeSetting,
   monthDiff,
   ORG_SETTING_KEYS,
+  orgUnitAt,
   splitDig,
 } from "@dig/core";
 import type { OrgSettingNode, OrgSettingOverride } from "@dig/core";
@@ -1506,11 +1507,12 @@ import { DEFAULT_SETTING } from "@dig/contracts";
 export async function finalizeMonth(yearMonth: string, actor: string) {
   const evals = await prisma.monthlyEvaluation.findMany({ where: { yearMonth } });
   // インセンティブの還元率は組織ごと（カスタマーグロースは5%・既定は20%）。
-  const rates = await incentiveRateMap();
+  // その月の所属で判定する（月の途中で異動しても当時の事業部のルールが効く）。
+  const rates = await incentiveRateMap(yearMonth);
   // 昇降級のしきい値も事業部ごとに上書きできる（未設定は全社設定を継承）。
   const settingRow = await prisma.setting.findUnique({ where: { yearMonth } });
   const baseSetting = settingRow ? toSetting(settingRow) : DEFAULT_SETTING;
-  const settings = await settingMap(baseSetting);
+  const settings = await settingMap(baseSetting, yearMonth);
   const snapshot = evals.map((ev) => {
     const seika = ev.seikaDig.toNumber();
     const bonus = ev.bonusDig.toNumber();
@@ -1585,7 +1587,7 @@ export async function setTargetDivisions(divisions: string[], actor: string) {
  * 確定済みの行は残す。
  */
 export async function pruneEvaluationsOutOfScope(yearMonth: string, actor: string) {
-  const scopeIds = await targetPersonIds();
+  const scopeIds = await targetPersonIds(yearMonth);
   const targets = scopeIds === null ? await listTargetDivisions() : [];
   if (scopeIds === null && targets.length === 0) return { deleted: 0 };
   const keep =
@@ -1642,12 +1644,15 @@ async function aggregateGroupEvaluations(yearMonth: string) {
   const byLeader = new Map<string, string[]>();
 
   // ① 組織（グループ/チーム）に長が設定されていれば、その配下メンバーを合算対象にする。
-  const [units, allMembers] = await Promise.all([
+  // 所属は**対象月時点**で解決する。チーム構成は月ごとに変わるため、
+  // 今の構成で過去月を合算すると、当時いなかった人まで長の実績に混ざってしまう。
+  const [units, allMembers, orgAt] = await Promise.all([
     prisma.orgUnit.findMany(),
     prisma.member.findMany({
       where: { status: "在籍" },
       select: { personId: true, orgUnitId: true, groupLeaderId: true, aggregateMode: true },
     }),
+    memberOrgMapAt(yearMonth),
   ]);
   if (units.length > 0) {
     const childrenOf = new Map<number, number[]>();
@@ -1663,7 +1668,10 @@ async function aggregateGroupEvaluations(yearMonth: string) {
       if (!u.leaderId) continue;
       const ids = new Set(subtree(u.id));
       const subs = allMembers
-        .filter((m) => m.orgUnitId !== null && ids.has(m.orgUnitId) && m.personId !== u.leaderId)
+        .filter((m) => {
+          const org = orgAt.get(m.personId) ?? m.orgUnitId;
+          return org !== null && ids.has(org) && m.personId !== u.leaderId;
+        })
         .map((m) => m.personId);
       if (subs.length > 0) {
         byLeader.set(u.leaderId, [...new Set([...(byLeader.get(u.leaderId) ?? []), ...subs])]);
@@ -2342,7 +2350,8 @@ export async function generateEvaluations(
     }));
   const setting = toSetting(settingRow);
   // 予算係数・保険係数・座席代・昇降級しきい値は事業部（組織）ごとに上書きできる。
-  const settings = await settingMap(setting);
+  // 対象月の所属で解決する（チーム構成は月ごとに変わるため）。
+  const settings = await settingMap(setting, yearMonth);
   const settingOf = (personId: string) => settings.get(personId) ?? setting;
 
   // 対象月に計上される承認済借入（入社時の初回借入を含む）を実績Digへ反映する。
@@ -2358,7 +2367,7 @@ export async function generateEvaluations(
   );
   // 評価対象を絞る。組織が登録されていれば「対象に指定した組織とその配下」、
   // 未登録なら従来どおり対象事業部（未登録なら全員＝従来動作）。
-  const scopeIds = await targetPersonIds();
+  const scopeIds = await targetPersonIds(yearMonth);
   const targets = scopeIds === null ? await listTargetDivisions() : [];
   const members = await prisma.member.findMany({
     where: {
@@ -3007,14 +3016,20 @@ function incentiveRateOf(id: number | null, byId: Map<number, OrgNode>): number 
   return INCENTIVE_RATE;
 }
 
-/** personId → インセンティブ還元率 のマップ（組織未設定は既定20%）。 */
-export async function incentiveRateMap(): Promise<Map<string, number>> {
-  const [units, members] = await Promise.all([
+/**
+ * personId → インセンティブ還元率 のマップ（組織未設定は既定20%）。
+ * yearMonth を渡すとその月の所属で判定する（チーム異動をさかのぼって正しく評価するため）。
+ */
+export async function incentiveRateMap(yearMonth?: string): Promise<Map<string, number>> {
+  const [units, members, orgAt] = await Promise.all([
     prisma.orgUnit.findMany(),
     prisma.member.findMany({ where: { status: "在籍" }, select: { personId: true, orgUnitId: true } }),
+    memberOrgMapAt(yearMonth ?? currentYearMonth()),
   ]);
   const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
-  return new Map(members.map((m) => [m.personId, incentiveRateOf(m.orgUnitId, byId)]));
+  return new Map(
+    members.map((m) => [m.personId, incentiveRateOf(orgAt.get(m.personId) ?? m.orgUnitId, byId)]),
+  );
 }
 
 // ─────────────────────────────────────────────
@@ -3035,11 +3050,15 @@ function toSettingNode(u: Record<string, unknown>): OrgSettingNode {
   return node;
 }
 
-/** personId → 所属組織から継承した上書き のマップ（組織未設定なら全項目 null）。 */
-export async function orgOverrideMap(): Promise<Map<string, OrgSettingOverride>> {
-  const [units, members] = await Promise.all([
+/**
+ * personId → 所属組織から継承した上書き のマップ（組織未設定なら全項目 null）。
+ * yearMonth を渡すとその月の所属で継承をたどる。
+ */
+export async function orgOverrideMap(yearMonth?: string): Promise<Map<string, OrgSettingOverride>> {
+  const [units, members, orgAt] = await Promise.all([
     prisma.orgUnit.findMany(),
     prisma.member.findMany({ select: { personId: true, orgUnitId: true } }),
+    memberOrgMapAt(yearMonth ?? currentYearMonth()),
   ]);
   const byId = new Map(units.map((u) => [u.id, toSettingNode(u as unknown as Record<string, unknown>)]));
   // 同じ組織の人が何度も祖先をたどらないよう、組織単位でキャッシュする。
@@ -3051,15 +3070,16 @@ export async function orgOverrideMap(): Promise<Map<string, OrgSettingOverride>>
     cache.set(orgUnitId, ov);
     return ov;
   };
-  return new Map(members.map((m) => [m.personId, overrideFor(m.orgUnitId)]));
+  return new Map(members.map((m) => [m.personId, overrideFor(orgAt.get(m.personId) ?? m.orgUnitId)]));
 }
 
 /**
  * personId → その人に適用される Setting のマップ。
  * 所属組織（自分→祖先）の上書きを全社設定に重ねる。組織未設定なら全社設定そのまま。
+ * yearMonth を渡すとその月の所属で判定する。
  */
-export async function settingMap(base: Setting): Promise<Map<string, Setting>> {
-  const overrides = await orgOverrideMap();
+export async function settingMap(base: Setting, yearMonth?: string): Promise<Map<string, Setting>> {
+  const overrides = await orgOverrideMap(yearMonth);
   return new Map([...overrides].map(([personId, ov]) => [personId, mergeSetting(base, ov)]));
 }
 
@@ -3228,22 +3248,106 @@ export async function deleteOrgUnit(id: number, actor: string) {
   return { id };
 }
 
-/** メンバーの所属組織を設定する（null で未所属に戻す）。division は事業部祖先へ追随。 */
-export async function setMemberOrgUnit(personId: string, orgUnitId: number | null, actor: string) {
+/** 当月（"YYYY-MM"）。所属履歴の既定の対象月に使う。 */
+export function currentYearMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+/**
+ * メンバーの所属組織を設定する（null で未所属に戻す）。division は事業部祖先へ追随。
+ *
+ * `yearMonth` を指定すると**その月から**の所属として履歴に積む。
+ * 6月・7月・8月でチーム構成が違う、という運用をそのまま持てる。
+ * 省略時は当月からの変更として扱う。
+ *
+ * Member.orgUnitId は「今の所属」を表すため、履歴を書いたあと当月時点で
+ * 解決し直して同期する（過去月だけ直したときに今の所属が動かないように）。
+ */
+export async function setMemberOrgUnit(
+  personId: string,
+  orgUnitId: number | null,
+  actor: string,
+  yearMonth?: string,
+) {
   const units = await prisma.orgUnit.findMany();
   const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
   if (orgUnitId !== null && !byId.has(orgUnitId)) throw new NotFoundError("組織が見つかりません");
-  const division = orgUnitId === null ? null : divisionNameOf(orgUnitId, byId);
+  const from = yearMonth ?? currentYearMonth();
+
+  await prisma.memberOrgHistory.upsert({
+    where: { personId_fromYearMonth: { personId, fromYearMonth: from } },
+    update: { orgUnitId, updatedBy: actor },
+    create: { personId, fromYearMonth: from, orgUnitId, updatedBy: actor },
+  });
+
+  // 当月時点の所属を Member 側へ反映する（過去月の修正では今の所属は変わらない）。
+  const history = await prisma.memberOrgHistory.findMany({
+    where: { personId },
+    select: { fromYearMonth: true, orgUnitId: true },
+  });
+  const current = orgUnitAt(history, currentYearMonth(), orgUnitId);
+  const division = current === null ? null : divisionNameOf(current, byId);
   await prisma.member.update({
     where: { personId },
     data: {
-      orgUnitId,
+      orgUnitId: current,
       // 事業部名は評価台帳・集計で使うため、組織から導出して保持する。
       ...(division ? { division, divisionOverride: division } : {}),
     },
   });
-  await audit(actor, "member.org.set", "Member", personId, { orgUnitId, division });
-  return { personId, orgUnitId, division };
+  await audit(actor, "member.org.set", "Member", personId, { orgUnitId, division, from });
+  return { personId, orgUnitId, division, fromYearMonth: from, currentOrgUnitId: current };
+}
+
+/**
+ * 指定月の personId → 所属組織 のマップ。
+ * 履歴が無い人は Member.orgUnitId（現在の所属）にフォールバックする
+ * （履歴を導入する前のデータをそのまま活かすため）。
+ */
+export async function memberOrgMapAt(yearMonth: string): Promise<Map<string, number | null>> {
+  const [members, history] = await Promise.all([
+    prisma.member.findMany({ select: { personId: true, orgUnitId: true } }),
+    // 対象月より後の行も含めて全件渡す。orgUnitAt は「履歴より前の月は最初に
+    // 記録された所属」を返すため、ここで lte で絞ると最も古い行が見えなくなり、
+    // 履歴開始前の月が「現在の所属」に落ちてしまう。
+    prisma.memberOrgHistory.findMany({
+      select: { personId: true, fromYearMonth: true, orgUnitId: true },
+    }),
+  ]);
+  const byPerson = new Map<string, { fromYearMonth: string; orgUnitId: number | null }[]>();
+  for (const h of history) byPerson.set(h.personId, [...(byPerson.get(h.personId) ?? []), h]);
+  return new Map(
+    members.map((m) => [
+      m.personId,
+      orgUnitAt(byPerson.get(m.personId) ?? [], yearMonth, m.orgUnitId),
+    ]),
+  );
+}
+
+/** 1人分の所属履歴（古い順）。いつどのチームだったかを画面に出すのに使う。 */
+export async function listMemberOrgHistory(personId: string) {
+  return prisma.memberOrgHistory.findMany({
+    where: { personId },
+    orderBy: { fromYearMonth: "asc" },
+    select: { fromYearMonth: true, orgUnitId: true, updatedBy: true, updatedAt: true },
+  });
+}
+
+/** 所属履歴の1行を取り消す（その月の変更を無かったことにする）。 */
+export async function deleteMemberOrgHistory(
+  personId: string,
+  fromYearMonth: string,
+  actor: string,
+) {
+  const row = await prisma.memberOrgHistory.findUnique({
+    where: { personId_fromYearMonth: { personId, fromYearMonth } },
+  });
+  if (!row) throw new NotFoundError("その月の所属履歴がありません");
+  await prisma.memberOrgHistory.delete({
+    where: { personId_fromYearMonth: { personId, fromYearMonth } },
+  });
+  await audit(actor, "member.org.history.delete", "Member", personId, { fromYearMonth });
+  return { personId, fromYearMonth };
 }
 
 /** 組織から導出される事業部名を全メンバーへ反映する（組織名変更時など）。 */
@@ -3276,17 +3380,26 @@ export async function syncMemberDivisions(actor: string) {
  * 組織が登録されていれば「自分または祖先が対象に指定された組織の所属者」、
  * 組織が未登録なら従来どおり対象事業部（TargetDivision）で判定する。
  */
-export async function targetPersonIds(): Promise<string[] | null> {
+export async function targetPersonIds(yearMonth?: string): Promise<string[] | null> {
   const units = await prisma.orgUnit.findMany();
   if (units.length === 0) return null; // 従来動作（TargetDivision）にフォールバック
   const byId = new Map(units.map((u) => [u.id, u as OrgNode]));
   const targetIds = new Set(units.filter((u) => inTargetScope(u.id, byId)).map((u) => u.id));
   if (targetIds.size === 0) return null;
-  const members = await prisma.member.findMany({
-    where: { status: "在籍", orgUnitId: { in: [...targetIds] } },
-    select: { personId: true },
-  });
-  return members.map((m) => m.personId);
+  // 所属は対象月時点で判定する。8月に評価対象外のチームへ移った人が、
+  // 6月の評価からも消える、というズレを防ぐ。
+  const [members, orgAt] = await Promise.all([
+    prisma.member.findMany({ where: { status: "在籍" }, select: { personId: true, orgUnitId: true } }),
+    memberOrgMapAt(yearMonth ?? currentYearMonth()),
+  ]);
+  return members
+    .filter((m) => {
+      const org = orgAt.get(m.personId) ?? m.orgUnitId;
+      // 未所属（組織を設定していない人）は評価に入らない。
+      // 閲覧・承認だけのアカウントはここに該当する。
+      return org !== null && targetIds.has(org);
+    })
+    .map((m) => m.personId);
 }
 
 /** 指定した組織とその配下すべての組織ID（アカウント一括発行の対象範囲）。 */
