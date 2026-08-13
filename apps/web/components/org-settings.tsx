@@ -42,7 +42,14 @@ interface PickerMember {
  * 「評価対象」に指定した組織とその配下が Dig評価の対象になる。
  * 「長」を設定すると、その組織の配下メンバーの予算Digが長に合算される。
  */
-export function OrgSettings({ members }: { members: PickerMember[] }) {
+export function OrgSettings({
+  members,
+  yearMonth,
+}: {
+  members: PickerMember[];
+  /** 人数・在籍者名をどの月の所属で数えるか（親から渡される対象月）。 */
+  yearMonth?: string;
+}) {
   const [units, setUnits] = useState<OrgUnit[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -139,6 +146,15 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
     return ids;
   };
 
+  /**
+   * 直属／配下の人数。渡された members は対象月の所属で解決済みなので、
+   * ここから数えれば人数も氏名も同じ月を指す（APIの人数は現在の所属のため使わない）。
+   */
+  const countsOf = (u: OrgUnit) => {
+    const { direct, below } = membersOf(u.id);
+    return { direct: direct.length, total: direct.length + below.length };
+  };
+
   /** 直属と、配下（子孫）だけに居るメンバーを分けて返す。 */
   const membersOf = (unitId: number) => {
     const ids = descendantsOf(unitId);
@@ -161,7 +177,11 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
     <>
       <SectionHeader
         title="組織設定"
-        note="事業部 ＞ グループ ＞ チーム。ここで作った組織を全従業員一覧で選択します"
+        note={
+          yearMonth
+            ? `事業部 ＞ グループ ＞ チーム。人数は ${yearMonth} 時点の所属で数えています`
+            : "事業部 ＞ グループ ＞ チーム。ここで作った組織を全従業員一覧で選択します"
+        }
         accent="accent"
       />
 
@@ -255,11 +275,11 @@ export function OrgSettings({ members }: { members: PickerMember[] }) {
                   <td className="px-3 py-2 text-right">
                     <button
                       onClick={() => setOpenMembers(openMembers === u.id ? null : u.id)}
-                      disabled={u.totalMembers === 0}
-                      title={u.totalMembers === 0 ? "所属者がいません" : "クリックで氏名を表示"}
+                      disabled={countsOf(u).total === 0}
+                      title={countsOf(u).total === 0 ? "所属者がいません" : "クリックで氏名を表示"}
                       className="text-ink-muted underline decoration-dotted underline-offset-2 disabled:cursor-default disabled:no-underline disabled:opacity-60"
                     >
-                      {u.directMembers}（{u.totalMembers}）
+                      {countsOf(u).direct}（{countsOf(u).total}）
                     </button>
                   </td>
                   <td className="px-3 py-2">

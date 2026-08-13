@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { yen } from "@/lib/format";
 import { SectionHeader } from "./ui";
@@ -74,6 +74,13 @@ export function MemberMaster() {
   const [savingId, setSavingId] = useState<string | null>(null);
   // 一覧の絞り込み（氏名・Person ID）。300名規模なのでクライアント側で十分。
   const [query, setQuery] = useState("");
+  /**
+   * 組織列が対象にする月。チーム構成は月ごとに変わるため、
+   * 「何月の所属を見て／直しているのか」を明示する。
+   */
+  const [orgYm, setOrgYm] = useState(ymNow());
+  /** orgYm 時点の personId → 所属組織。履歴が無い人は現在の所属が返る。 */
+  const [orgAt, setOrgAt] = useState<Record<string, number | null>>({});
 
   async function load() {
     try {
@@ -93,7 +100,35 @@ export function MemberMaster() {
     } catch {
       /* 組織・レンジの取得失敗は一覧表示に影響させない */
     }
+    await loadOrgAt(orgYm);
   }
+
+  /** 指定月の所属マップを取り直す。 */
+  const loadOrgAt = useCallback(async (ym: string) => {
+    try {
+      const r = await apiGet<{ orgUnitByPerson: Record<string, number | null> }>(
+        `/api/members/org-map?ym=${ym}`,
+      );
+      setOrgAt(r.orgUnitByPerson ?? {});
+    } catch {
+      setOrgAt({}); // 取れなければ現在の所属（member.orgUnitId）で表示する
+    }
+  }, []);
+
+  // 対象月を変えたら、その月の所属を引き直す。
+  useEffect(() => {
+    void loadOrgAt(orgYm);
+  }, [orgYm, loadOrgAt]);
+
+  /**
+   * 表示中の月におけるその人の所属。
+   * マップに載っていれば（未所属＝null も含めて）それが正。
+   * まだ読み込めていない場合だけ現在の所属で代用する。
+   */
+  const orgOf = (m: Member): number | null =>
+    Object.prototype.hasOwnProperty.call(orgAt, m.personId)
+      ? orgAt[m.personId]
+      : (m.orgUnitId ?? null);
 
   /** 行の1項目を保存する（役職・レンジ・役職ベース・サイクル）。 */
   async function saveRow(personId: string, patch: Record<string, unknown>) {
@@ -111,12 +146,17 @@ export function MemberMaster() {
     }
   }
 
-  /** 所属組織を保存する（事業部名も組織から自動で追随する）。 */
+  /**
+   * 所属組織を保存する（事業部名も組織から自動で追随する）。
+   * 対象月を送るので、その月からの所属として履歴に積まれる。
+   * 前月以前の所属は変わらない。
+   */
   async function saveOrg(personId: string, orgUnitId: number | null) {
     setSavingId(personId);
     try {
       await apiSend(`/api/members/${encodeURIComponent(personId)}/org`, "POST", {
         orgUnitId,
+        yearMonth: orgYm,
         actor: ACTOR,
       });
       await load();
@@ -483,6 +523,32 @@ export function MemberMaster() {
         <span className="text-xs text-ink-muted">
           {query ? `${visibleMembers.length} / ${members.length}名` : `${members.length}名`}
         </span>
+
+        {/* 組織列の対象月。チーム構成は月ごとに変わるため、
+            「何月の所属を見て／直しているのか」をここで切り替える。 */}
+        <label className="ml-auto flex items-center gap-2 text-xs text-ink-muted">
+          組織の対象月
+          <input
+            type="month"
+            value={orgYm}
+            onChange={(e) => setOrgYm(e.target.value || ymNow())}
+            className="rounded-card border border-surface-border px-2 py-1.5 text-sm"
+          />
+        </label>
+        {orgYm !== ymNow() && (
+          <button
+            onClick={() => setOrgYm(ymNow())}
+            className="rounded-card border border-surface-border px-3 py-1.5 text-xs text-ink-muted"
+          >
+            今月に戻す
+          </button>
+        )}
+      </div>
+
+      <div className="mb-3 rounded-card bg-blue-50 px-3 py-2 text-[11px] text-brand-primary">
+        組織列は <b>{orgYm}</b> 時点の所属です。ここで変更すると<b>{orgYm} 以降</b>の所属になり、
+        前月までの所属はそのまま残ります。6月・7月・8月でチームが違う場合は、対象月を切り替えて
+        それぞれ設定してください。変更していない月は直前の月の所属を引き継ぎます。
       </div>
 
       <div className="mb-4 overflow-x-auto rounded-card border border-surface-border bg-white shadow-card">
@@ -492,7 +558,7 @@ export function MemberMaster() {
               <th className="whitespace-nowrap px-3 py-2 font-semibold">Person ID</th>
               <th className="whitespace-nowrap px-3 py-2 font-semibold">氏名</th>
               <th className="px-3 py-2 font-semibold">jinjer所属</th>
-              <th className="px-3 py-2 font-semibold">組織（この画面上）</th>
+              <th className="px-3 py-2 font-semibold">組織（{orgYm} 時点）</th>
               <th className="px-3 py-2 font-semibold">jinjer役職</th>
               <th className="px-3 py-2 font-semibold">役職</th>
               <th className="whitespace-nowrap px-3 py-2 font-semibold">雇用</th>
@@ -525,7 +591,7 @@ export function MemberMaster() {
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={m.orgUnitId ?? ""}
+                      value={orgOf(m) ?? ""}
                       disabled={savingId === m.personId}
                       onChange={(e) => void saveOrg(m.personId, e.target.value ? Number(e.target.value) : null)}
                       className="w-52 rounded-card border border-surface-border bg-white px-2 py-1 text-xs"
@@ -684,7 +750,15 @@ export function MemberMaster() {
 
       {/* 組織設定（事業部 ＞ グループ ＞ チーム） */}
       <div className="mt-8">
-        <OrgSettings members={members.map((m) => ({ personId: m.personId, name: m.name, orgUnitId: m.orgUnitId ?? null }))} />
+        <OrgSettings
+          yearMonth={orgYm}
+          members={members.map((m) => ({
+            personId: m.personId,
+            name: m.name,
+            // 人数のドリルダウンも対象月の所属で数える。
+            orgUnitId: orgOf(m),
+          }))}
+        />
       </div>
 
       {/* 役職の紐付け（jinjer の役職名 → Dig評価の役職） */}

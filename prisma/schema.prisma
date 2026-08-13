@@ -227,6 +227,7 @@ model OrgUnit {
   updatedAt DateTime @updatedAt
 
   members Member[]
+  orgHistory MemberOrgHistory[]
 
   @@index([parentId])
   @@index([level])
@@ -383,9 +384,32 @@ model Member {
   loans        Loan[]              @relation("borrower")
   paidTxns     Transaction[]       @relation("payer")
   receivedTxns Transaction[]       @relation("payee")
+  orgHistory   MemberOrgHistory[]
 
   @@index([division])
   @@index([groupLeaderId])
+}
+
+/// 所属組織（チーム）の履歴。月ごとにチーム構成が変わるため、
+/// 「いつからそこにいるか」を持ち、月を指定して当時の所属を引けるようにする。
+///
+/// 有効な行は `fromYearMonth <= 対象月` のうち最も新しいもの。
+/// 1件も無ければ Member.orgUnitId（現在の所属）を使う（履歴導入前のデータ）。
+model MemberOrgHistory {
+  personId      String
+  /// この月から適用（"2026-06"）
+  fromYearMonth String
+  /// 所属組織。null は未所属
+  orgUnitId     Int?
+  member        Member   @relation(fields: [personId], references: [personId], onDelete: Cascade)
+  orgUnit       OrgUnit? @relation(fields: [orgUnitId], references: [id])
+  updatedBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@id([personId, fromYearMonth])
+  @@index([fromYearMonth])
+  @@index([orgUnitId])
 }
 
 /// 月次評価（要件 F-7）。確定後はイミュータブル（値凍結・F-9）。

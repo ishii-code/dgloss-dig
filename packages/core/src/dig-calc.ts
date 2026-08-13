@@ -738,6 +738,43 @@ export interface OrgSettingNode extends OrgSettingOverride {
   parentId: number | null;
 }
 
+/** 所属組織の履歴1件。「この月から この組織」。 */
+export interface OrgAssignment {
+  /** 適用開始月（"2026-06"） */
+  fromYearMonth: string;
+  /** 所属組織。null は未所属 */
+  orgUnitId: number | null;
+}
+
+/**
+ * 指定した月の所属組織を求める。
+ *
+ * チーム構成は月ごとに変わるため、所属は「いつからそこにいるか」で持つ。
+ * 有効なのは `fromYearMonth <= yearMonth` のうち最も新しい行。
+ *
+ * 履歴より前の月は、**最初に記録された所属**として扱う。
+ * ここで「現在の所属」に落とすと、8月を直したときに6月の表示まで動いてしまい、
+ * 過去月の見え方が安定しない。記録が1件も無いときだけ `fallback`
+ * （＝Member.orgUnitId・履歴を入れる前のデータ）を使う。
+ *
+ * 月は "YYYY-MM" の固定長なので、文字列の辞書順比較が時系列順と一致する。
+ */
+export function orgUnitAt(
+  history: readonly OrgAssignment[],
+  yearMonth: string,
+  fallback: number | null = null,
+): number | null {
+  let best: OrgAssignment | undefined; // 発効済みのうち最も新しい
+  let earliest: OrgAssignment | undefined; // 履歴全体で最も古い
+  for (const h of history) {
+    if (earliest === undefined || h.fromYearMonth < earliest.fromYearMonth) earliest = h;
+    if (h.fromYearMonth > yearMonth) continue; // まだ発効していない
+    if (best === undefined || h.fromYearMonth > best.fromYearMonth) best = h;
+  }
+  if (best !== undefined) return best.orgUnitId;
+  return earliest === undefined ? fallback : earliest.orgUnitId;
+}
+
 /**
  * 自分 → 祖先 の順にたどり、項目ごとに最初に見つかった値を採用して1つの上書きにまとめる。
  * 循環参照があっても止まる（訪問済みは打ち切り）。
