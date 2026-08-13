@@ -387,7 +387,7 @@ export function Dashboard({ signedIn }: { signedIn?: CurrentAccount | null }) {
         ) : activeTab === "salary" ? (
           <SalaryTable />
         ) : activeTab === "accounts" ? (
-          <AccountsAdmin />
+          <AccountsAdmin viewerRole={role} actorId={account.id} />
         ) : activeTab === "requests" ? (
           <FeatureRequests />
         ) : (

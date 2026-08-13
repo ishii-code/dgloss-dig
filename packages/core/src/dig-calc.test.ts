@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canAccessTab, CG_INCENTIVE_RATE, DEFAULT_SETTING, TAB_MIN_LEVEL } from "@dig/contracts";
+import {
+  accountManageDenial,
+  canAccessTab,
+  CG_INCENTIVE_RATE,
+  DEFAULT_SETTING,
+  TAB_MIN_LEVEL,
+} from "@dig/contracts";
 import {
   barterDig,
   CG_SPLIT_CHURN_SALES_PCT,
@@ -782,7 +788,7 @@ describe("画面（タブ）の権限", () => {
     "period-close": 1,
     finance: 2,
     master: 2,
-    accounts: 2,
+    accounts: 1, // アカウント管理は ADMIN 以上（スーパーADMIN の操作は API 側で禁止）
   };
 
   it("全タブが権限マップに明示されている（未定義=全員公開の事故を防ぐ）", () => {
@@ -799,14 +805,52 @@ describe("画面（タブ）の権限", () => {
     }
   });
 
-  it("ADMIN は従業員マスタ・アカウント管理・金融承認に入れない", () => {
-    for (const tab of ["finance", "master", "accounts"]) {
+  it("ADMIN は従業員マスタ・金融承認に入れない", () => {
+    for (const tab of ["finance", "master"]) {
       expect(canAccessTab("ADMIN", tab)).toBe(false);
     }
     expect(canAccessTab("ADMIN", "rules")).toBe(true);
   });
 
+  it("ADMIN はアカウント管理に入れる（スーパーADMIN の操作は API 側で禁止）", () => {
+    expect(canAccessTab("ADMIN", "accounts")).toBe(true);
+    expect(canAccessTab("SUPER_ADMIN", "accounts")).toBe(true);
+    expect(canAccessTab("USER", "accounts")).toBe(false);
+  });
+
   it("給与テーブルは全員が見られる（等級制度の全社開示）", () => {
     expect(canAccessTab("USER", "salary")).toBe(true);
+  });
+});
+
+describe("アカウント管理の操作可否（権限の格上げ防止）", () => {
+  it("スーパーADMIN は何でも操作できる", () => {
+    expect(accountManageDenial("SUPER_ADMIN", "SUPER_ADMIN", "SUPER_ADMIN")).toBeNull();
+    expect(accountManageDenial("SUPER_ADMIN", "USER", "ADMIN")).toBeNull();
+  });
+
+  it("ADMIN は ADMIN・ユーザーのアカウントを操作できる", () => {
+    expect(accountManageDenial("ADMIN", "USER", "USER")).toBeNull();
+    expect(accountManageDenial("ADMIN", "ADMIN", "ADMIN")).toBeNull();
+    expect(accountManageDenial("ADMIN", "USER", "ADMIN")).toBeNull();
+    expect(accountManageDenial("ADMIN", null, "USER")).toBeNull(); // 新規作成
+  });
+
+  it("ADMIN はスーパーADMIN のアカウントを操作できない", () => {
+    // 仮パスワードの再発行・削除など、ロールを変えない操作も含めて塞ぐ。
+    // 発行できてしまうと、その仮パスワードでスーパーADMIN としてログインできる。
+    expect(accountManageDenial("ADMIN", "SUPER_ADMIN")).toContain("スーパーADMIN のみ操作");
+    expect(accountManageDenial("ADMIN", "SUPER_ADMIN", "SUPER_ADMIN")).not.toBeNull();
+  });
+
+  it("ADMIN はスーパーADMIN 権限を誰にも付与できない（自分への格上げも不可）", () => {
+    expect(accountManageDenial("ADMIN", "USER", "SUPER_ADMIN")).toContain("付与はスーパーADMIN のみ");
+    expect(accountManageDenial("ADMIN", "ADMIN", "SUPER_ADMIN")).not.toBeNull();
+    expect(accountManageDenial("ADMIN", null, "SUPER_ADMIN")).not.toBeNull();
+  });
+
+  it("ユーザー権限は何も操作できない（タブ権限で先に弾かれるが二重に防ぐ）", () => {
+    expect(accountManageDenial("USER", "USER", "SUPER_ADMIN")).not.toBeNull();
+    expect(accountManageDenial("USER", "SUPER_ADMIN")).not.toBeNull();
   });
 });

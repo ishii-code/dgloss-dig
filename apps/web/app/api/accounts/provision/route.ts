@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { error, handle, ok } from "@/server/http";
-import { requireAdmin } from "@/server/guard";
+import { assertCanManageAccount, requireAdmin } from "@/server/guard";
 import { listTargetDivisions, orgUnitWithDescendants, provisionMemberAccounts } from "@/server/repo";
 
 export const runtime = "nodejs";
@@ -29,8 +29,10 @@ const Body = z.object({
 // 在籍メンバーへアカウントを一括発行（既定は USER 権限・既存の権限は変更しない）。
 export const POST = (req: NextRequest) =>
   handle(async () => {
-    await requireAdmin();
+    const viewer = await requireAdmin();
     const body = Body.parse(await req.json());
+    // ADMIN はスーパーADMIN 権限のアカウントを一括発行できない。
+    assertCanManageAccount(viewer, null, body.role);
 
     // 組織を指定した場合は、その組織と配下すべてのメンバーが対象。
     let orgUnitIds: number[] | undefined;
