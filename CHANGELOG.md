@@ -1,3 +1,10 @@
+# [1.42.0](https://github.com/ishii-code/dgloss-dig/compare/v1.41.0...v1.42.0) (2026-08-13)
+
+
+### Features
+
+* **org:** チームの所属を月ごとに持てるようにする ([#99](https://github.com/ishii-code/dgloss-dig/issues/99)) ([dd88c58](https://github.com/ishii-code/dgloss-dig/commit/dd88c581baf509cabe63fb6a8c2772fbfb301697))
+
 # [1.41.0](https://github.com/ishii-code/dgloss-dig/compare/v1.40.1...v1.41.0) (2026-08-13)
 
 
