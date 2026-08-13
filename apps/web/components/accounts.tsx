@@ -1,7 +1,7 @@
 "use client";
 
 import { ROLE_LABEL, type Role } from "@dig/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api";
 import { SectionHeader } from "./ui";
 
@@ -106,6 +106,10 @@ export function AccountsAdmin() {
   const [pwFilter, setPwFilter] = useState<"" | "none" | "temp" | "set">("");
   /** 氏名・メール・従業員IDでの検索。入力中は組織の絞り込みを無視して全アカウントから探す。 */
   const [q, setQ] = useState("");
+  /** 登録／更新フォーム専用のメッセージ。ボタンの隣に出す（画面上部だと見えないため）。 */
+  const [formMsg, setFormMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  /** 保存後に一覧まで戻すためのアンカー。 */
+  const listRef = useRef<HTMLDivElement>(null);
 
   // 一括発行で選べるのは事業部とグループ（チームは出さない）。
   const orgOptions = allOrgUnits.filter((o) => o.level === "事業部" || o.level === "グループ");
@@ -358,10 +362,25 @@ export function AccountsAdmin() {
   }
 
   async function save() {
-    if (!form.id || !form.email || !form.name) {
-      setMsg("ID・メール・氏名 は必須です");
+    // 未入力の指摘はフォームの隣にも出す。画面上部のメッセージ欄だけだと
+    // フォームがページ下端にあるためスクロール位置から見えず、
+    // 「保存を押しても何も起きない」ように見えてしまう。
+    const missing = [!form.id && "ID(メール)", !form.email && "メール", !form.name && "氏名"].filter(
+      Boolean,
+    ) as string[];
+    if (missing.length > 0) {
+      const text = `${missing.join("・")} を入力してください`;
+      setFormMsg({ kind: "error", text });
+      setMsg(text);
       return;
     }
+    if (!form.email.includes("@")) {
+      const text = "メールの形式が正しくありません（例: fujitsuka@dgloss.co.jp）";
+      setFormMsg({ kind: "error", text });
+      setMsg(text);
+      return;
+    }
+    setFormMsg(null);
     try {
       await apiSend("/api/accounts", "POST", { ...form, actor: ACTOR });
       // 保存しただけでは事業部で絞った一覧に出てこない（組織は従業員マスタ側にあるため）。
@@ -376,10 +395,15 @@ export function AccountsAdmin() {
               "従業員IDを設定すると事業部での絞り込みや一括発行の対象になります。" +
               "仮パスワードは行の右端の「仮PW発行」で今すぐ発行できます。"),
       );
+      setFormMsg({ kind: "ok", text: `${form.name} を保存しました。上の一覧へ移動します` });
       setForm(empty);
       await load();
+      // 保存した本人は一覧側に出るので、そこまでスクロールして見せる。
+      listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) {
-      setMsg(`保存失敗: ${(e as Error).message}`);
+      const text = `保存できませんでした: ${(e as Error).message}`;
+      setFormMsg({ kind: "error", text });
+      setMsg(text);
     }
   }
   async function del(id: string) {
@@ -692,7 +716,10 @@ export function AccountsAdmin() {
         </div>
       )}
 
-      <div className="mb-4 overflow-hidden rounded-card border border-surface-border bg-white shadow-card">
+      <div
+        ref={listRef}
+        className="mb-4 overflow-hidden rounded-card border border-surface-border bg-white shadow-card"
+      >
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-surface-border bg-surface-panel text-left text-xs text-ink-muted">
@@ -769,9 +796,9 @@ export function AccountsAdmin() {
       <div className="rounded-card border border-surface-border bg-white p-4 shadow-card">
         <div className="mb-3 text-sm font-semibold text-ink">アカウント 登録 / 更新</div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Fld label="ID(メール)"><input className="inp" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value, email: form.email || e.target.value })} /></Fld>
-          <Fld label="メール"><input className="inp" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Fld>
-          <Fld label="氏名"><input className="inp" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Fld>
+          <Fld label="ID(メール)" required><input className="inp" placeholder="fujitsuka@dgloss.co.jp" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value, email: form.email || e.target.value })} /></Fld>
+          <Fld label="メール" required><input className="inp" placeholder="fujitsuka@dgloss.co.jp" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Fld>
+          <Fld label="氏名" required><input className="inp" placeholder="藤塚 太郎" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Fld>
           <Fld label="権限">
             <select className="inp" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
               {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
@@ -808,7 +835,16 @@ export function AccountsAdmin() {
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button onClick={save} className="rounded-card bg-brand-primary px-4 py-1.5 text-sm font-bold text-white">保存</button>
-          <button onClick={() => setForm(empty)} className="rounded-card border border-surface-border px-4 py-1.5 text-sm text-ink-muted">クリア</button>
+          <button onClick={() => { setForm(empty); setFormMsg(null); }} className="rounded-card border border-surface-border px-4 py-1.5 text-sm text-ink-muted">クリア</button>
+          {formMsg && (
+            <span
+              className={`text-xs font-semibold ${
+                formMsg.kind === "ok" ? "text-semantic-success" : "text-semantic-danger"
+              }`}
+            >
+              {formMsg.text}
+            </span>
+          )}
           <span className="text-[11px] text-ink-muted">
             保存すると上の一覧に氏名で検索した状態で表示されます。仮パスワードはその行の
             <b>「仮PW発行」</b>から発行してください。
@@ -852,10 +888,21 @@ function RoleCard({ role, desc }: { role: Role; desc: string }) {
   );
 }
 
-function Fld({ label, children }: { label: string; children: React.ReactNode }) {
+function Fld({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] text-ink-muted">{label}</span>
+      <span className="mb-1 block text-[11px] text-ink-muted">
+        {label}
+        {required && <span className="ml-0.5 text-semantic-danger">*</span>}
+      </span>
       {children}
     </label>
   );
